@@ -1,0 +1,37 @@
+import Lean.Data.Options
+
+register_option tacticgenerator.ps_endpoint : String := 
+  { defValue := ""
+    group := "tacticgenerator"
+    descr := "Endpoint for the premise selection service." }
+
+register_option tacticgenerator.llm_endpoint : String :=
+  { defValue := ""
+    group := "tacticgenerator"
+    descr := "Endpoint for the LLM service." }
+
+register_option tacticgenerator.llm_api_key : String :=
+  { defValue := ""
+    group := "tacticgenerator"
+    descr := "API key for the LLM service." }
+
+register_option tacticgenerator.num_samples : Nat :=
+  { defValue := 10
+    group := "tacticgenerator"
+    descr := "Number of samples to generate." }
+
+register_option tacticgenerator.num_premises : Nat :=
+  { defValue := 10
+    group := "tacticgenerator"
+    descr := "Number of queries to the premise selection service." }
+
+register_option tacticgenerator.max_tokens : Nat :=
+  { defValue := 1024
+    group := "tacticgenerator"
+    descr := "Maximum number of tokens in the response." }
+
+register_option tacticgenerator.model : String :=
+  { defValue := "awesome-reaper"
+    group := "tacticgenerator"
+    descr := "Model to use for the LLM." }
+
