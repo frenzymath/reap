@@ -11,7 +11,7 @@ The `reap` tactic take advantages of our latest algebra & research level stepwis
 Just add a line to `lakefile.lean` or `lakefile.toml` to require the package.
 
 ```lean4
-require "openAI_client" from git "https://github.com/frenzymath/reap.git"
+require "reap" from git "https://github.com/frenzymath/reap.git"
 ```
 
 ## Usage
@@ -29,3 +29,4 @@ There are also some variants of the `reap` tactic that you can use:
 
 - `reap!` tries to close the goal within a single step, otherwise it will fail.
 - `reap?` generates the tactic and then toggles a `trythis` block, allowing you to manually specify the next step.
+
