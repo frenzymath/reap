@@ -1,10 +1,12 @@
 # Reap Tactic
 
+![reap demo](https://github.com/frenzymath/reap/blob/main/docs/demo.mp4)
 Use `reap` tactic to leverage the power of LLM in your formal proof.
 
 ## Introduction
 
 The `reap` tactic take advantages of our latest algebra & research level stepwise-prover [Real-Prover](https://arxiv.org/abs/2505.20613) to facilitate the proof-writing process.
+
 
 ## Installation
 
