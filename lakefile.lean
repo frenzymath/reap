@@ -10,9 +10,6 @@ package "reap" where
 
 require "openAI_client" from git "https://github.com/frenzymath/openai_client.git"
 
-require "leanprover-community" / "mathlib" @ git "v4.16.0"
-
-
 @[default_target]
 lean_lib «Reap» where
   -- add any library configuration options here
