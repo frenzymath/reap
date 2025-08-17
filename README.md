@@ -1,6 +1,6 @@
 # Reap Tactic
 
-![demo](https://github.com/user-attachments/assets/39c09672-ecd5-478f-be81-1b5d043c804a)
+https://github.com/user-attachments/assets/39c09672-ecd5-478f-be81-1b5d043c804a
 
 Use `reap` tactic to leverage the power of LLM in your formal proof.
 
