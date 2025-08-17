@@ -1,6 +1,7 @@
 # Reap Tactic
 
-![reap demo](https://github.com/frenzymath/reap/blob/main/docs/demo.mp4)
+![demo](https://github.com/user-attachments/assets/39c09672-ecd5-478f-be81-1b5d043c804a)
+
 Use `reap` tactic to leverage the power of LLM in your formal proof.
 
 ## Introduction
@@ -31,4 +32,5 @@ There are also some variants of the `reap` tactic that you can use:
 
 - `reap!` tries to close the goal within a single step, otherwise it will fail.
 - `reap?` generates the tactic and then toggles a `trythis` block, allowing you to manually specify the next step.
+
 
