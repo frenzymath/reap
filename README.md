@@ -11,7 +11,7 @@ The `reap` tactic take advantages of our latest algebra & research level stepwis
 
 ## Installation
 
-Just add a line to `lakefile.lean` or `lakefile.toml` to require the package.
+Just add a line to `lakefile.lean` or `lakefile.toml` to require the package. Make sure the lean-toolchain is on `v4.16.0`, which works best with our prover model.
 
 ```lean4
 require "reap" from git "https://github.com/frenzymath/reap.git"
@@ -32,5 +32,6 @@ There are also some variants of the `reap` tactic that you can use:
 
 - `reap!` tries to close the goal within a single step, otherwise it will fail.
 - `reap?` generates the tactic and then toggles a `trythis` block, allowing you to manually specify the next step.
+
 
 
