@@ -11,27 +11,42 @@ The `reap` tactic take advantages of our latest algebra & research level stepwis
 
 ## Installation
 
-Just add a line to `lakefile.lean` or `lakefile.toml` to require the package. Make sure the lean-toolchain is on `v4.16.0`, which works best with our prover model.
+To use `reap` in your project, just add a line to `lakefile.lean` or `lakefile.toml`.
+
+If you are using `lakefile.lean`, add the following line to your repo.
 
 ```lean4
 require "reap" from git "https://github.com/frenzymath/reap.git"
 ```
+Or if you are using `lakefile.toml`
+
+```toml
+[[require]]
+name = "reap"
+git = "https://github.com/frenzymath/reap.git"
+rev = "main"
+```
+
+Currently, our model works best with Mathlib binded with `v4.16.0`, you can also test it on other versions. Any feedbacks are welcomed.
 
 ## Usage
 
 To use the tactic, you need to import the module:
 
 ```lean4
+import Mathlib
 import Reap
 
 example (φ : G →* H) (S T : Subgroup G) (hST : S ≤ T) : map φ S ≤ map φ T := by
-  reap
+  reap?
 ```
 
-There are also some variants of the `reap` tactic that you can use:
+There are also some variants of the `reap` tactic:
 
+- `reap` tries to push the goal one step further.
 - `reap!` tries to close the goal within a single step, otherwise it will fail.
 - `reap?` generates the tactic and then toggles a `trythis` block, allowing you to manually specify the next step.
+
 
 
 
