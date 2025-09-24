@@ -1,17 +1,17 @@
 import Lean.Data.Options
 
 register_option tacticgenerator.ps_endpoint : String := 
-  { defValue := ""
+  { defValue := "https://console.siflow.cn/siflow/auriga/skyinfer/ytwang/retrieve-premises-1/retrieve_premises"
     group := "tacticgenerator"
     descr := "Endpoint for the premise selection service." }
 
 register_option tacticgenerator.llm_endpoint : String :=
-  { defValue := ""
+  { defValue := "https://console.siflow.cn/siflow/auriga/skyinfer/ytwang/awesome-reaper-1/v1"
     group := "tacticgenerator"
     descr := "Endpoint for the LLM service." }
 
 register_option tacticgenerator.llm_api_key : String :=
-  { defValue := ""
+  { defValue := "awesome-reaper"
     group := "tacticgenerator"
     descr := "API key for the LLM service." }
 
@@ -21,7 +21,7 @@ register_option tacticgenerator.num_samples : Nat :=
     descr := "Number of samples to generate." }
 
 register_option tacticgenerator.num_premises : Nat :=
-  { defValue := 10
+  { defValue := 16
     group := "tacticgenerator"
     descr := "Number of queries to the premise selection service." }
 
