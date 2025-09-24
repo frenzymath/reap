@@ -56,7 +56,7 @@ def generateTactics (generator : TacticGenerator) (ppGoal : String)
   let relatedTheorems ←
     generator.premiseSelectionClient.getResults ppGoal (← options.num_premises)
   let prompt := mkPrompt ppGoal relatedTheorems
-  let mut results : Std.HashSet String := Std.HashSet.empty
+  let mut results : Std.HashSet String := Std.HashSet.emptyWithCapacity
   let req : OpenAIChatRequest := {
     model := ← options.model,
     messages := [ { role := "user", content := prompt } ],

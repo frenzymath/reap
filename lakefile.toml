@@ -1,0 +1,13 @@
+name = "reap"
+defaultTargets = ["Reap"]
+
+[leanOptions]
+pp.unicode.fun = true
+
+[[require]]
+name = "openAI_client"
+git = "https://github.com/frenzymath/openai_client.git"
+rev = "main"
+
+[[lean_lib]]
+name = "Reap"
