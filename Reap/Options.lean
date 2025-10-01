@@ -34,3 +34,8 @@ register_option reap.model : String :=
   { defValue := "awesome-reaper"
     group := "tacticgenerator"
     descr := "Model to use for the LLM." }
+
+register_option reap.temperature : Nat :=
+  { defValue := 99
+    group := "tacticgenerator"
+    descr := "Temperature for the LLM (In percentage)." }
