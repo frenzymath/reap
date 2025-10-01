@@ -16,7 +16,7 @@ To use `reap` in your project, just add a line to `lakefile.lean` or `lakefile.t
 If you are using `lakefile.lean`, add the following line to your repo.
 
 ```lean4
-require "reap" from git "https://github.com/frenzymath/reap.git"
+require "reap" from git "https://github.com/frenzymath/reap.git" @ "main"
 ```
 Or if you are using `lakefile.toml`
 
