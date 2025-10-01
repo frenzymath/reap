@@ -58,7 +58,7 @@ def generatePPTactics (ppGoal : String) : CoreM <| Array (String × Float) := do
     model := reap.model.get (← getOptions),
     messages := [ { role := "user", content := prompt } ],
     n := reap.num_samples.get (← getOptions),
-    temperature := 0.7,
+    temperature := (reap.temperature.get (← getOptions)).toFloat / 100.0,
     max_tokens := reap.max_tokens.get (← getOptions),
   }
   let res ← generator.llmClient.generateChat req
