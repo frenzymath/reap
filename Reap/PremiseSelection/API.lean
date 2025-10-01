@@ -1,3 +1,4 @@
+import Reap.Options
 import Requests
 
 open Lean
@@ -22,13 +23,14 @@ namespace PremiseSelectionClient
 initialize cache :
   IO.Ref (Std.HashMap (String × Nat) (Array PremiseSelectionResult)) ← IO.mkRef {}
 
-def getResults (client : PremiseSelectionClient) (s : String) (num_results : Nat := 6) : CoreM <| Array PremiseSelectionResult := do
+def getPremises (s : String) (num_results : Nat := 6) : CoreM <| Array PremiseSelectionResult := do
   match (← cache.get).get? (s, num_results) with
   | some results => return results
   | none => do
     let s' := System.Uri.escapeUri s
     let req := PremiseSelectionRequest.mk s' num_results
-    let results : Array PremiseSelectionResult ← Requests.post client.apiUrl req
+    let url := reap.ps_endpoint.get (← getOptions)
+    let results : Array PremiseSelectionResult ← Requests.post url req
     cache.modify fun m => m.insert (s, num_results) results
     return results
 
