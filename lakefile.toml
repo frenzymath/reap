@@ -13,7 +13,7 @@ rev = "main"
 [[require]]
 name = "aesop"
 git = "https://github.com/leanprover-community/aesop"
-rev = "master"
+rev = "v4.24.0-rc1"
 
 
 [[lean_lib]]
