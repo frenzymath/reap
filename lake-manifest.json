@@ -8,7 +8,7 @@
    "rev": "9e8de5716b162ec8983a89711a186d13ff871c22",
    "name": "aesop",
    "manifestFile": "lake-manifest.json",
-   "inputRev": null,
+   "inputRev": "v4.24.0-rc1",
    "inherited": false,
    "configFile": "lakefile.toml"},
   {"url": "https://github.com/frenzymath/openai_client.git",
