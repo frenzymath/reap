@@ -3,5 +3,4 @@ import Reap.Tactic.Generator
 
 def reapTacGen : Aesop.TacGen := TacticGenerator.generateTactics
 
-
-macro "reap!!" : tactic => `(tactic| aesop? (add 100% reapTacGen))
+macro "reap!!" : tactic => `(tactic| aesop? (rule_sets := [reapTacGen]))
