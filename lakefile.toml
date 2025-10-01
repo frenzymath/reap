@@ -9,5 +9,11 @@ name = "openAI_client"
 git = "https://github.com/frenzymath/openai_client.git"
 rev = "main"
 
+
+[[require]]
+name = "aesop"
+git = "https://github.com/leanprover-community/aesop"
+
+
 [[lean_lib]]
 name = "Reap"
