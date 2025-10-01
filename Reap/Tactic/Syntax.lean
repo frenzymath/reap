@@ -1,6 +1,6 @@
 import Lean.Widget.UserWidget
 
-import Reap.Tactic.Basic
+import Reap.Options
 import Reap.Tactic.Generator
 import Reap.Future.PP
 
@@ -144,26 +144,10 @@ def addSuggestions (tacRef : Syntax) (suggestions: Array (String × Float))
       ]
       Widget.savePanelWidgetInfo (hash llmstepTryThisWidget.javascript) (StateT.lift json) (.ofRange stxRange)
 
-def options : TacticGeneratorOptions := {
-  ps_endpoint := return tacticgenerator.ps_endpoint.get (← getOptions)
-  llm_endpoint := return tacticgenerator.llm_endpoint.get (← getOptions)
-  llm_api_key := return tacticgenerator.llm_api_key.get (← getOptions)
-  temperature := return 0.7
-  num_samples := return tacticgenerator.num_samples.get (← getOptions)
-  num_premises := return tacticgenerator.num_premises.get (← getOptions)
-  max_tokens := return tacticgenerator.max_tokens.get (← getOptions)
-  model := return tacticgenerator.model.get (← getOptions)}
 
-def getClient : CoreM TacticGenerator := do
-  return {
-    llmClient := ⟨← options.llm_endpoint, ← options.llm_api_key⟩
-    premiseSelectionClient := ⟨← options.ps_endpoint⟩
-  }
 
 def reaperTac (g : MVarId) : TacticM Unit := do
-  let pp := toString (← Meta.ppGoal g)
-  let tacticGenerator ← getClient
-  let suggestions ← tacticGenerator.generateTactics pp options
+  let suggestions ← TacticGenerator.generateTactics g
   if suggestions.isEmpty then
     logInfo m!"No suggestions generated."
   else
@@ -188,9 +172,7 @@ def reaperTac (g : MVarId) : TacticM Unit := do
         throwError "Error while parsing suggestion: {e}"
 
 def reaper!Tac (g : MVarId) : TacticM Unit := do
-  let pp := toString (← Meta.ppGoal g)
-  let tacticGenerator ← getClient
-  let suggestions ← tacticGenerator.generateTactics pp options
+  let suggestions ← TacticGenerator.generateTactics g
   if suggestions.isEmpty then
     logInfo m!"No suggestions generated."
   else
@@ -216,10 +198,8 @@ def reaper!Tac (g : MVarId) : TacticM Unit := do
 /--
 Call the LLM on a goal, asking for suggestions beginning with a prefix.
 -/
-def reaper?Tac (g : MVarId) : MetaM (Array (String × Float)) := do
-  let pp := toString (← Meta.ppGoal g)
-  let tacticGenerator ← getClient
-  tacticGenerator.generateTactics pp options
+def reaper?Tac (g : MVarId) : MetaM (Array (String × Float)) :=
+  TacticGenerator.generateTactics g
 
 syntax "reap" : tactic
 elab_rules : tactic

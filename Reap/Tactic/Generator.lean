@@ -1,4 +1,5 @@
 import OpenAIClient
+import Reap.Options
 import Reap.Future.Basic
 import Reap.PremiseSelection.API
 
@@ -7,16 +8,6 @@ open Lean Elab Tactic
 structure TacticGenerator where
   llmClient : OpenAIClient
   premiseSelectionClient : PremiseSelectionClient
-
-structure TacticGeneratorOptions where
-  ps_endpoint : CoreM String
-  llm_endpoint : CoreM String
-  llm_api_key : CoreM String
-  temperature : CoreM Float
-  num_samples : CoreM Nat
-  num_premises : CoreM Nat
-  max_tokens : CoreM Nat
-  model : CoreM String
 
 namespace TacticGenerator
 
@@ -50,19 +41,25 @@ TACTIC:
 
 Assistant:"
 
+def getClient : CoreM TacticGenerator := do
+  return {
+    llmClient := ⟨reap.llm_endpoint.get (← getOptions), reap.llm_api_key.get (← getOptions)⟩
+    premiseSelectionClient := ⟨reap.ps_endpoint.get (← getOptions)⟩
+  }
+
 /-- Main function to generate tactics -/
-def generateTactics (generator : TacticGenerator) (ppGoal : String)
-  (options : TacticGeneratorOptions) : CoreM <| Array (String × Float) := do
+def generatePPTactics (ppGoal : String) : CoreM <| Array (String × Float) := do
+  let generator ← getClient
   let relatedTheorems ←
-    generator.premiseSelectionClient.getResults ppGoal (← options.num_premises)
+    PremiseSelectionClient.getPremises ppGoal (reap.num_premises.get (← getOptions))
   let prompt := mkPrompt ppGoal relatedTheorems
   let mut results : Std.HashSet String := Std.HashSet.emptyWithCapacity
   let req : OpenAIChatRequest := {
-    model := ← options.model,
+    model := reap.model.get (← getOptions),
     messages := [ { role := "user", content := prompt } ],
-    n := ← options.num_samples,
-    temperature := ← options.temperature,
-    max_tokens := ← options.max_tokens,
+    n := reap.num_samples.get (← getOptions),
+    temperature := 0.7,
+    max_tokens := reap.max_tokens.get (← getOptions),
   }
   let res ← generator.llmClient.generateChat req
   for result in (parseChatResponseOpenAI res) do
@@ -70,4 +67,6 @@ def generateTactics (generator : TacticGenerator) (ppGoal : String)
   let finalResults := (results.toArray.filter filterGeneration).map fun x => (x, 1.0)
   return finalResults
 
-
+def generateTactics (mvarId : MVarId) : MetaM <| Array (String × Float) := do
+  let ppGoal := toString (← Meta.ppGoal mvarId)
+  generatePPTactics ppGoal
