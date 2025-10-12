@@ -9,6 +9,17 @@ structure TacticGenerator where
   llmClient : OpenAIClient
   premiseSelectionClient : PremiseSelectionClient
 
+def OpenAIChatChoice.computeProbability (choice: OpenAIChatChoice) : Float :=
+  let choice_logprobs := choice.logprobs
+  match choice_logprobs with
+  | none => 1.0
+  | some choice_logprobs =>
+    let probs := choice_logprobs.content
+    match probs with
+    | none => 1.0
+    | some probs =>
+      Float.exp (probs.map fun x => x.logprob).sum
+
 namespace TacticGenerator
 
 def filterGeneration (s: String) : Bool :=
@@ -18,8 +29,8 @@ def filterGeneration (s: String) : Bool :=
 def parseCompletionResponseOpenAI (res: OpenAICompletionResponse) : Array String :=
   (res.choices.map fun x => (x.text)).toArray
 
-def parseChatResponseOpenAI (res: OpenAIChatResponse) : Array String :=
-  (res.choices.map fun x => (x.message.content)).toArray
+def parseChatResponseOpenAI (res: OpenAIChatResponse) : Array (String × Float) :=
+  (res.choices.map fun x => (x.message.content, x.computeProbability)).toArray
 
 def mkRelatedTheorem (id: Nat) (ps : PremiseSelectionResult) : String :=
   let formalName := ps.formal_name
@@ -53,18 +64,23 @@ def generatePPTactics (ppGoal : String) : CoreM <| Array (String × Float) := do
   let relatedTheorems ←
     PremiseSelectionClient.getPremises ppGoal (reap.num_premises.get (← getOptions))
   let prompt := mkPrompt ppGoal relatedTheorems
-  let mut results : Std.HashSet String := Std.HashSet.emptyWithCapacity
+  -- let mut results : Std.HashSet String := Std.HashSet.emptyWithCapacity
+  let mut results : List (String × Float) := []
   let req : OpenAIChatRequest := {
     model := reap.model.get (← getOptions),
     messages := [ { role := "user", content := prompt } ],
     n := reap.num_samples.get (← getOptions),
     temperature := (reap.temperature.get (← getOptions)).toFloat / 100.0,
     max_tokens := reap.max_tokens.get (← getOptions),
+    logprobs := true
   }
   let res ← generator.llmClient.generateChat req
   for result in (parseChatResponseOpenAI res) do
     results := results.insert result
-  let finalResults := (results.toArray.filter filterGeneration).map fun x => (x, 1.0)
+    logInfo m!"Generated tactic: {result.1} with probability {result.2}"
+  results := results.eraseDupsBy (fun x y => x.1 == y.1)
+  let finalResults := (results.toArray.filter fun x => filterGeneration x.1)
+  -- let finalResults := (results.toArray.filter filterGeneration).map fun x => (x, 1.0)
   return finalResults
 
 def generateTactics (mvarId : MVarId) : MetaM <| Array (String × Float) := do

@@ -15,7 +15,7 @@
    "type": "git",
    "subDir": null,
    "scope": "",
-   "rev": "1f866614e96a74e12b308087c6a810d04b3bf437",
+   "rev": "e66902643814913362cc9e07bdc411770b49b809",
    "name": "openAI_client",
    "manifestFile": "lake-manifest.json",
    "inputRev": "main",
