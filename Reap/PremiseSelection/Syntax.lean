@@ -11,7 +11,7 @@ def PremiseSelection.ppSelector (selector : String → Config → MetaM (Array S
     MetaM (Array Suggestion) := do
   selector (toString (← Meta.ppGoal g)) c
 
-def psSelector : Lean.PremiseSelection.Selector :=
+def reapSelector : Lean.PremiseSelection.Selector :=
   fun mvarId _ => do
   let pp ← Meta.ppGoal mvarId
   let rs ← PremiseSelectionClient.getPremises (toString pp)
