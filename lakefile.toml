@@ -13,6 +13,7 @@ rev = "main"
 [[require]]
 name = "aesop"
 scope = "leanprover-community"
+rev = "master"
 
 [[lean_lib]]
 name = "Reap"
