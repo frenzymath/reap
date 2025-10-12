@@ -77,7 +77,7 @@ def generatePPTactics (ppGoal : String) : CoreM <| Array (String × Float) := do
   let res ← generator.llmClient.generateChat req
   for result in (parseChatResponseOpenAI res) do
     results := results.insert result
-    logInfo m!"Generated tactic: {result.1} with probability {result.2}"
+    -- logInfo m!"Generated tactic: {result.1} with probability {result.2}"
   results := results.eraseDupsBy (fun x y => x.1 == y.1)
   let finalResults := (results.toArray.filter fun x => filterGeneration x.1)
   -- let finalResults := (results.toArray.filter filterGeneration).map fun x => (x, 1.0)
