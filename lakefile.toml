@@ -9,7 +9,6 @@ name = "openAI_client"
 git = "https://github.com/frenzymath/openai_client.git"
 rev = "main"
 
-
 [[require]]
 name = "aesop"
 scope = "leanprover-community"
