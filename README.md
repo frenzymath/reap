@@ -48,7 +48,7 @@ name = "mathlib"
 scope = "leanprover-community"
 ```
 
-Currently, our model is trained with Mathlib at `v4.16.0`, and `reap` is compatible with up to `v4.24.0-rc1`. As we are working on bridging version gap and further improvements, any feedbacks are welcomed.
+Currently, our model is trained with Mathlib at `v4.16.0`, and `reap` is compatible with up to `v4.24.0`. As we are working on bridging version gap and further improvements, any feedbacks are welcomed.
 
 ## Usage
 
@@ -118,4 +118,5 @@ As `reap` relies on a backend LLM service to provide tactic suggestions, we unde
   When you call `reap` to generate the next tactic, it sends the *current proof state* to the model endpoint you’ve configured (by default, our hosted cluster).
   
 * **What data is sent?**
+
   Only the proof state at the point of the call. No file paths, user identifiers, or other project metadata are transmitted. On our side, this data is processed statelessly by the model.
