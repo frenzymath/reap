@@ -116,8 +116,8 @@ def addSuggestions (tacRef : Syntax) (suggestions: Array (String × Float))
       let checks ← suggestions.mapM checkTactic
       let texts := suggestions.map fun text => (
         (Std.Format.pretty text.trim
-         (indent := (body - start).1)
-         (column := (tacticRange.start - start).1)
+         (indent := (body.byteIdx - start.byteIdx))
+         (column := (tacticRange.start.byteIdx - start.byteIdx))
       ))
       let textsAndChecks := (texts.zip checks |>.qsort
         fun a b => compare a.2.1 b.2.1 = Ordering.lt).filter fun x =>
