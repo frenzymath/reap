@@ -39,3 +39,8 @@ register_option reap.temperature : Nat :=
   { defValue := 99
     group := "tacticgenerator"
     descr := "Temperature for the LLM (In percentage)." }
+
+register_option reap.max_goals : Nat :=
+  { defValue := 64
+    group := "tacticgenerator"
+    descr := "Max number of nodes in aesop tree search" }
