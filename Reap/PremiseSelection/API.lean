@@ -1,5 +1,8 @@
-import Reap.Options
-import Requests
+module
+public meta import Reap.Options
+public meta import Requests
+
+public meta section
 
 open Lean
 

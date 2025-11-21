@@ -1,8 +1,12 @@
-import Lean.Widget.UserWidget
+module
 
-import Reap.Options
-import Reap.Tactic.Generator
-import Reap.Future.PP
+public meta import Lean.Widget.UserWidget
+
+public meta import Reap.Options
+public meta import Reap.Tactic.Generator
+public meta import Reap.Future.PP
+
+public meta section
 
 open Lean Elab Tactic
 

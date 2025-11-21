@@ -1,7 +1,10 @@
-import OpenAIClient
-import Reap.Options
-import Reap.Future.Basic
-import Reap.PremiseSelection.API
+module
+public meta import OpenAIClient
+public meta import Reap.Options
+public meta import Reap.Future.Basic
+public meta import Reap.PremiseSelection.API
+
+public meta section
 
 open Lean Elab Tactic
 
