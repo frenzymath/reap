@@ -132,7 +132,7 @@ def addSuggestions (tacRef : Syntax) (suggestions: Array (String × Float))
 
       { start := map.lineStart (map.toPosition start).line
         stop := map.lineStart ((map.toPosition stop).line + 1) }
-      let full_range : String.Range :=
+      let full_range : Syntax.Range :=
       { start := tacticRange.start, stop := tacticRange.stop }
       let full_range := map.utf8RangeToLspRange full_range
       let tactic := Std.Format.pretty f!"{tacRef.prettyPrint}{tacRef.prettyPrint}"
