@@ -3,6 +3,7 @@ defaultTargets = ["Reap"]
 
 [leanOptions]
 pp.unicode.fun = true
+experimental.module = true
 
 [[require]]
 name = "openAI_client"

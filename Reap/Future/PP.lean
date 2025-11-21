@@ -1,5 +1,6 @@
-import Lean.Meta.PPGoal
-
+module
+public meta import Lean.Meta.PPGoal
+public meta section
 namespace Lean.Meta
 
 def ppGoalType (mvarId : MVarId) : MetaM Format := do

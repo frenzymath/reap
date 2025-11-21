@@ -1,6 +1,9 @@
-import Aesop
-import Reap.Tactic.Generator
-import Reap.Tactic.Ruleset
+module
+public meta import Aesop
+public meta import Reap.Tactic.Generator
+public meta import Reap.Tactic.Ruleset
+
+public meta section
 
 @[aesop 100% (rule_sets := [reap])]
 def reapTacGen : Aesop.TacGen := TacticGenerator.generateTactics

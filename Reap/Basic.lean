@@ -1,3 +1,5 @@
-import Reap.Tactic.Syntax
-import Reap.Tactic.Search
-import Reap.PremiseSelection.Syntax
+module
+
+public meta import Reap.Tactic.Syntax
+public meta import Reap.Tactic.Search
+public meta import Reap.PremiseSelection.Syntax

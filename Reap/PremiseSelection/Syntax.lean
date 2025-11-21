@@ -1,6 +1,7 @@
-import Reap.Options
-import Reap.PremiseSelection.API
-
+module
+public meta import Reap.Options
+public meta import Reap.PremiseSelection.API
+public meta section
 open Lean.LibrarySuggestions
 
 open Lean

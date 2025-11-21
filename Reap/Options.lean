@@ -1,4 +1,8 @@
-import Lean.Data.Options
+module
+
+public meta import Lean.Data.Options
+
+public meta section
 
 register_option reap.ps_endpoint : String :=
   { defValue := "https://console.siflow.cn/siflow/auriga/skyinfer/ytwang/retrieve-premises-1/retrieve_premises"
