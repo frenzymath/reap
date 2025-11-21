@@ -10,7 +10,33 @@ The `reap` tactic take advantages of our latest algebra & research level stepwis
 
 ## Installation
 
-To use `reap` in your project, just add a line to `lakefile.lean` or `lakefile.toml`. Please make sure `reap` is added **before `mathlib` dependency** to avoid cache issues.
+### Using our mathlib4 fork
+
+If you are working on `mathlib4` master or newer, you may use our fork of `mathlib4` which includes `reap` as a dependency. This is the recommended way to use `reap` as it ensures compatibility with the latest features and improvements.
+
+In your `lakefile.lean`, change the `mathlib` dependency to our fork:
+
+```lean4
+require mathlib from git
+  "https://github.com/frenzymath/mathlib4.git" @ "reap"
+```
+
+Or in `lakefile.toml`, change the `mathlib` dependency to our fork:
+
+```toml
+[[require]]
+name = "mathlib"
+git = "https://github.com/frenzymath/mathlib4.git"
+rev = "reap"
+```
+
+Then run `lake update` and `lake exe cache get` as usual to update your dependencies.
+
+Then wherever you use `mathlib` (specifically downstream of `Mathlib.Tactic.Common`), you can use `reap` as well. This is the easiest way to get started with `reap`, as it automatically sets up everything you need.
+
+### Using `reap` as a separate dependency
+
+To use `reap` in your project separately, add a line to `lakefile.lean` or `lakefile.toml`. Please make sure `reap` is added **before `mathlib` dependency** to avoid cache issues.
 
 If you are using `lakefile.lean`, replace
 
@@ -48,7 +74,7 @@ name = "mathlib"
 scope = "leanprover-community"
 ```
 
-Currently, our model is trained with Mathlib at `v4.16.0`, and `reap` is compatible with up to `v4.24.0`. As we are working on bridging version gap and further improvements, any feedbacks are welcomed.
+Currently, our model is trained with Mathlib at `v4.16.0`, and `reap` is compatible with up to `v4.26.0-rc1`. As we are working on bridging version gap and further improvements, any feedbacks are welcomed.
 
 ## Usage
 
@@ -64,7 +90,7 @@ example (φ : G →* H) (S T : Subgroup G) (hST : S ≤ T) : map φ S ≤ map φ
   reap?
 ```
 
-Here, `reap?` will toggle a `trythis` block, which suggests a possible next step.
+Here, `reap?` will toggle a `TryThis` block, which suggests a possible next step.
 
 There are also some variants of the `reap` tactic:
 
@@ -91,17 +117,17 @@ Here, `reap!!` take advantage of `aesop.tacGen` interface to do proof search wit
 
 ### Premise selection
 
-`reap` comes with a powerful premise selection engine, named `LeanSearch-PS`, which is trained on Mathlib and augmented corpus. We adapt this engine to work with official `PremiseSelection` interface, to get access:
+`reap` comes with a powerful premise selection engine, named `LeanSearch-PS`, which is trained on Mathlib and augmented corpus. We adapt this engine to work with official library suggestions interface, to get access:
 
 ```lean4
 import Mathlib
 import Reap
 
 -- Set `reap` as the default premise selector
-set_premise_selector reapSelector
+set_library_suggestions reapSelector
 
 example (φ : G →* H) (S T : Subgroup G) (hST : S ≤ T) : map φ S ≤ map φ T := by
-  suggest_premises
+  suggestions
 ```
 
 ## Privacy
