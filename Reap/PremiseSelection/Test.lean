@@ -1,8 +1,8 @@
 import Lean
 import Reap.PremiseSelection.Syntax
 
-set_premise_selector reapSelector
+set_library_suggestions reapSelector
 
 example (a b : Nat) : a + b = b + a := by
-  suggest_premises
+  suggestions
   sorry
