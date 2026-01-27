@@ -1,6 +1,7 @@
 module
 
 public meta import Lean.Widget.UserWidget
+public meta import Lean.Meta.Tactic.TryThis
 
 public meta import Reap.Options
 public meta import Reap.Tactic.Generator
@@ -114,14 +115,13 @@ def addSuggestions (tacRef : Syntax) (suggestions: Array (String × Float))
   if let some tacticRange := (origSpan?.getD tacRef).getRange? then
     -- if let some argRange := (origSpan?.getD pfxRef).getRange? then
       let map ← getFileMap
-      let start := String.findLineStart map.source tacticRange.start
-      let body := map.source.findAux (· ≠ ' ') tacticRange.start start
+      let (indent, column) := Lean.Meta.Tactic.TryThis.getIndentAndColumn map tacticRange
 
       let checks ← suggestions.mapM checkTactic
       let texts := suggestions.map fun text => (
-        (Std.Format.pretty text.trim
-         (indent := (body.byteIdx - start.byteIdx))
-         (column := (tacticRange.start.byteIdx - start.byteIdx))
+        (Std.Format.pretty text.trimAscii.toString
+         (indent := indent)
+         (column := column)
       ))
       let textsAndChecks := (texts.zip checks |>.qsort
         fun a b => compare a.2.1 b.2.1 = Ordering.lt).filter fun x =>
