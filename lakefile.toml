@@ -11,9 +11,9 @@ git = "https://github.com/frenzymath/openai_client.git"
 rev = "main"
 
 [[require]]
-name = "aesop"
-scope = "leanprover-community"
-rev = "master"
+name = "TreeSearch"
+git = "git@github.com:frenzymath/TreeSearch.git"
+rev = "feat/no-reap-dep"
 
 [[lean_lib]]
 name = "Reap"
