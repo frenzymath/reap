@@ -25,6 +25,16 @@ def OpenAIChatChoice.computeProbability (choice: OpenAIChatChoice) : Float :=
 
 namespace TacticGenerator
 
+/-- Strip `<think>...</think>` prefix that some LLMs prepend to their responses. -/
+def stripThinkingPrefix (s : String) : String :=
+  let s := s.trimLeft
+  if s.startsWith "<think>" then
+    let parts := s.splitOn "</think>"
+    if parts.length > 1 then
+      (String.intercalate "</think>" (parts.drop 1)).trimLeft
+    else s
+  else s
+
 def filterGeneration (s: String) : Bool :=
   let banned := ["sorry", "admit", "▅"]
   !(banned.any fun s' => (s.splitOn s').length > 1)
@@ -33,7 +43,7 @@ def parseCompletionResponseOpenAI (res: OpenAICompletionResponse) : Array String
   (res.choices.map fun x => (x.text)).toArray
 
 def parseChatResponseOpenAI (res: OpenAIChatResponse) : Array (String × Float) :=
-  (res.choices.map fun x => (x.message.content, x.computeProbability)).toArray
+  (res.choices.map fun x => (stripThinkingPrefix x.message.content, x.computeProbability)).toArray
 
 def mkRelatedTheorem (_id: Nat) (ps : PremiseSelectionResult) : String :=
   let formalName := ps.formal_name
