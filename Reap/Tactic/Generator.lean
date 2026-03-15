@@ -35,13 +35,13 @@ def parseCompletionResponseOpenAI (res: OpenAICompletionResponse) : Array String
 def parseChatResponseOpenAI (res: OpenAIChatResponse) : Array (String × Float) :=
   (res.choices.map fun x => (x.message.content, x.computeProbability)).toArray
 
-def mkRelatedTheorem (id: Nat) (ps : PremiseSelectionResult) : String :=
+def mkRelatedTheorem (_id: Nat) (ps : PremiseSelectionResult) : String :=
   let formalName := ps.formal_name
-  let informalName := ps.informal_name
+  -- let informalName := ps.informal_name
   let formalStatement := ps.formal_statement
-  "ID: " ++ toString id ++ "\n" ++
+  -- "ID: " ++ toString id ++ "\n" ++
   "Formal name: " ++ formalName ++ "\n" ++
-  "Informal name: " ++ informalName ++ "\n" ++
+  -- "Informal name: " ++ informalName ++ "\n" ++
   "Formal statement: " ++ formalStatement
 
 def mkPrompt (tacticState : String) (relatedTheorems: Array PremiseSelectionResult) : String :=
