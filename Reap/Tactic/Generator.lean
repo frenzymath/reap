@@ -99,3 +99,8 @@ def generatePPTactics (ppGoal : String) : CoreM <| Array (String × Float) := do
 def generateTactics (mvarId : MVarId) : MetaM <| Array (String × Float) := do
   let ppGoal := toString (← Meta.ppGoal mvarId)
   generatePPTactics ppGoal
+
+/-- Pseudo value function for testing: returns a random Float in [-10, 10]. -/
+def generateValue (_mvarId : MVarId) : MetaM Float := do
+  let rand ← IO.rand 0 20000
+  return (Float.ofNat rand) / 1000.0 - 10.0
