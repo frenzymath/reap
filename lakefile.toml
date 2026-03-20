@@ -13,7 +13,7 @@ rev = "main"
 [[require]]
 name = "TreeSearch"
 git = "git@github.com:frenzymath/TreeSearch.git"
-rev = "feat/option-max-goals"
+rev = "main"
 
 [[lean_lib]]
 name = "Reap"

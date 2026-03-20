@@ -150,8 +150,8 @@ def addSuggestions (tacRef : Syntax) (suggestions: Array (String × Float))
 
 
 
-def reaperTac (g : MVarId) : TacticM Unit := do
-  let suggestions ← TacticGenerator.generateTactics g
+def reaperTac (gs : List MVarId) : TacticM Unit := do
+  let suggestions ← TacticGenerator.generateTactics gs
   if suggestions.isEmpty then
     logInfo m!"No suggestions generated."
   else
@@ -175,8 +175,8 @@ def reaperTac (g : MVarId) : TacticM Unit := do
       | Except.error e =>
         throwError "Error while parsing suggestion: {e}"
 
-def reaper!Tac (g : MVarId) : TacticM Unit := do
-  let suggestions ← TacticGenerator.generateTactics g
+def reaper!Tac (gs : List MVarId) : TacticM Unit := do
+  let suggestions ← TacticGenerator.generateTactics gs
   if suggestions.isEmpty then
     logInfo m!"No suggestions generated."
   else
@@ -202,22 +202,22 @@ def reaper!Tac (g : MVarId) : TacticM Unit := do
 /--
 Call the LLM on a goal, asking for suggestions beginning with a prefix.
 -/
-def reaper?Tac (g : MVarId) : MetaM (Array (String × Float)) :=
-  TacticGenerator.generateTactics g
+def reaper?Tac (gs : List MVarId) : MetaM (Array (String × Float)) :=
+  TacticGenerator.generateTactics gs
 
 syntax "reap" : tactic
 elab_rules : tactic
   | `(tactic | reap) => do
-    let g ← getMainGoal
-    reaperTac g
+    let gs ← getUnsolvedGoals
+    reaperTac gs
 
-syntax "reap?" : tactic
-elab_rules : tactic
-  | `(tactic | reap?%$tac) => do
-    addSuggestions tac (← liftMetaMAtMain reaper?Tac)
+-- syntax "reap?" : tactic
+-- elab_rules : tactic
+--   | `(tactic | reap?%$tac) => do
+--     addSuggestions tac (← liftMetaMAtMain reaper?Tac)
 
-syntax "reap!" : tactic
-elab_rules : tactic
-  | `(tactic | reap!) => do
-    let g ← getMainGoal
-    reaper!Tac g
+-- syntax "reap!" : tactic
+-- elab_rules : tactic
+--   | `(tactic | reap!) => do
+--     let g ← getMainGoal
+--     reaper!Tac g
