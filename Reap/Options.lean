@@ -38,4 +38,9 @@ register_option reap.temperature : Nat :=
 
 register_option reap.max_goals : Nat :=
   { defValue := 64
-    descr := "Max number of nodes in aesop tree search" }
+    descr := "Max number of nodes in tree search" }
+
+register_option reap.max_steps : Nat :=
+  { defValue := 64
+    descr := "Max number of steps in MCTS tree search"
+  }

@@ -96,11 +96,15 @@ def generatePPTactics (ppGoal : String) : CoreM <| Array (String × Float) := do
   -- let finalResults := (results.toArray.filter filterGeneration).map fun x => (x, 1.0)
   return finalResults
 
-def generateTactics (mvarId : MVarId) : MetaM <| Array (String × Float) := do
-  let ppGoal := toString (← Meta.ppGoal mvarId)
-  generatePPTactics ppGoal
+def Meta.ppProofState (mvarIds : List MVarId) : MetaM Format := do
+  return Std.Format.joinSep (← mvarIds.mapM (Meta.ppGoal)) "\n".toFormat
+
+
+def generateTactics (mvarIds : List MVarId) : MetaM <| Array (String × Float) := do
+  let ppProofState := toString (← Meta.ppProofState mvarIds)
+  generatePPTactics ppProofState
 
 /-- Pseudo value function for testing: returns a random Float in [-10, 10]. -/
-def generateValue (_mvarId : MVarId) : MetaM Float := do
+def generateValue (_mvarIds : List MVarId) : MetaM Float := do
   let rand ← IO.rand 0 20000
   return (Float.ofNat rand) / 1000.0 - 10.0
