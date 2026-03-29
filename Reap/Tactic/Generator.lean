@@ -36,7 +36,7 @@ def stripThinkingPrefix (s : String) : String :=
   else s
 
 def filterGeneration (s: String) : Bool :=
-  let banned := ["sorry", "admit", "▅"]
+  let banned := ["sorry", "admit", "▅", "apply?", "exact?", "refine?", "calc?", "hint"]
   !(banned.any fun s' => (s.splitOn s').length > 1)
 
 def parseCompletionResponseOpenAI (res: OpenAICompletionResponse) : Array String :=
