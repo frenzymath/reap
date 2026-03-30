@@ -12,16 +12,16 @@ structure TacticGenerator where
   llmClient : OpenAIClient
   premiseSelectionClient : PremiseSelectionClient
 
-def OpenAIChatChoice.computeProbability (choice: OpenAIChatChoice) : Float :=
-  let choice_logprobs := choice.logprobs
-  match choice_logprobs with
-  | none => 1.0
+def OpenAIChatChoice.computeLogProbability (choice: OpenAIChatChoice) : Float :=
+  match choice.logprobs with
+  | none => 0.0
   | some choice_logprobs =>
-    let probs := choice_logprobs.content
-    match probs with
-    | none => 1.0
-    | some probs =>
-      Float.exp (probs.map fun x => x.logprob).sum
+    match choice_logprobs.content with
+    | none => 0.0
+    | some logProbs => (logProbs.map fun x => x.logprob).sum
+
+def OpenAIChatChoice.computeProbability (choice: OpenAIChatChoice) : Float :=
+  Float.exp $ OpenAIChatChoice.computeLogProbability choice
 
 namespace TacticGenerator
 
@@ -43,7 +43,7 @@ def parseCompletionResponseOpenAI (res: OpenAICompletionResponse) : Array String
   (res.choices.map fun x => (x.text)).toArray
 
 def parseChatResponseOpenAI (res: OpenAIChatResponse) : Array (String × Float) :=
-  (res.choices.map fun x => (stripThinkingPrefix x.message.content, x.computeProbability)).toArray
+  (res.choices.map fun x => (stripThinkingPrefix x.message.content, x.computeLogProbability)).toArray
 
 def mkRelatedTheorem (_id: Nat) (ps : PremiseSelectionResult) : String :=
   let formalName := ps.formal_name
