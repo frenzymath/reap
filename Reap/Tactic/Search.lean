@@ -7,7 +7,7 @@ public meta section
 elab "reapBFS" : tactic => do
   let opts ← Lean.getOptions
   let maxGoals := reap.max_goals.get opts
-  proofSearchBFS TacticGenerator.generateTactics maxGoals
+  proofSearchBFS TacticGenerator.generateTactics none maxGoals
 
 elab "reapMCTS" : tactic => do
   let opts ← Lean.getOptions
