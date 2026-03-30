@@ -12,7 +12,7 @@ rev = "main"
 
 [[require]]
 name = "TreeSearch"
-git = "git@github.com:frenzymath/TreeSearch.git"
+git = "https://github.com/frenzymath/TreeSearch.git"
 rev = "main"
 
 [[lean_lib]]
