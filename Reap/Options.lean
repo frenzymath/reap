@@ -5,11 +5,11 @@ public meta import Lean.Data.Options
 public meta section
 
 register_option reap.ps_endpoint : String :=
-  { defValue := "https://console.siflow.cn/siflow/auriga/skyinfer/ytwang/retrieve-premises-1/retrieve_premises"
+  { defValue := "https://console.siflow.cn/siflow/auriga/skyinfer/ytwang/ps2-1"
     descr := "Endpoint for the premise selection service." }
 
 register_option reap.llm_endpoint : String :=
-  { defValue := "https://console.siflow.cn/siflow/auriga/skyinfer/ytwang/awesome-reaper-1/v1"
+  { defValue := "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/ytwang/reap-1-7b"
     descr := "Endpoint for the LLM service." }
 
 register_option reap.llm_api_key : String :=
