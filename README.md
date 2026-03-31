@@ -136,13 +136,13 @@ As `reap` relies on a backend LLM service to provide tactic suggestions, we unde
 
 * **Which LLM is used / who runs it?**
   The backend uses our own trained model named **REAL-Prover**. The 7B version is open-sourced on HuggingFace ([link](https://huggingface.co/FrenzyMath/REAL-Prover)), while the hosted version we provide runs on our research cluster.
-  
+
 * **Does it require internet access?**
   By default, yes — the default endpoint is our hosted cluster. However, you can override this by setting `tacticgenerator.llm_endpoint` to a locally served instance of REAL-Prover. In that case, no internet connection is needed.
-  
+
 * **What API calls are made?**
   When you call `reap` to generate the next tactic, it sends the *current proof state* to the model endpoint you’ve configured (by default, our hosted cluster).
-  
+
 * **What data is sent?**
 
   Only the proof state at the point of the call. No file paths, user identifiers, or other project metadata are transmitted. On our side, this data is processed statelessly by the model.
