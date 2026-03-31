@@ -135,7 +135,6 @@ def generateValue (mvarIds : List MVarId) : MetaM Float := do
     i := i + 1
     let res ← generator.valueClient.generateChat req
     let res := parseChatResponseOpenAI res
-    IO.eprintln s!"===\nmvars : {mvarIds.map fun x => x.name}, state : {ppProofState}, score : {res}\n"
     let res := Json.parse res[0]!.1
     if let .ok res := res then
       result := fromJson? res |>.toOption
