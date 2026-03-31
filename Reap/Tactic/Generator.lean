@@ -10,6 +10,7 @@ open Lean Elab Tactic
 
 structure TacticGenerator where
   llmClient : OpenAIClient
+  valueClient : OpenAIClient
   premiseSelectionClient : PremiseSelectionClient
 
 def OpenAIChatChoice.computeLogProbability (choice: OpenAIChatChoice) : Float :=
@@ -45,6 +46,11 @@ def parseCompletionResponseOpenAI (res: OpenAICompletionResponse) : Array String
 def parseChatResponseOpenAI (res: OpenAIChatResponse) : Array (String × Float) :=
   (res.choices.map fun x => (stripThinkingPrefix x.message.content, x.computeLogProbability)).toArray
 
+def mkValuePrompt (tacticState : String) : String :=
+  "Please estimate how many tactic steps are required to solve this proof state in Lean.
+STATE:
+" ++ tacticState
+
 def mkRelatedTheorem (_id: Nat) (ps : PremiseSelectionResult) : String :=
   let formalName := ps.formal_name
   -- let informalName := ps.informal_name
@@ -68,6 +74,7 @@ Assistant:"
 def getClient : CoreM TacticGenerator := do
   return {
     llmClient := ⟨reap.llm_endpoint.get (← getOptions), reap.llm_api_key.get (← getOptions)⟩
+    valueClient := ⟨reap.value_endpoint.get (← getOptions), reap.llm_api_key.get (← getOptions)⟩
     premiseSelectionClient := ⟨reap.ps_endpoint.get (← getOptions)⟩
   }
 
@@ -104,7 +111,32 @@ def generateTactics (mvarIds : List MVarId) : MetaM <| Array (String × Float) :
   let ppProofState := toString (← Meta.ppProofState mvarIds)
   generatePPTactics ppProofState
 
+structure ValueResult where
+  score : Float
+deriving Inhabited, FromJson
+
 /-- Pseudo value function for testing: returns a random Float in [-10, 10]. -/
-def generateValue (_mvarIds : List MVarId) : MetaM Float := do
-  let rand ← IO.rand 0 20000
-  return (Float.ofNat rand) / 1000.0 - 10.0
+def generateValue (mvarIds : List MVarId) : MetaM Float := do
+  let generator ← getClient
+  let ppProofState := toString (← Meta.ppProofState mvarIds)
+  let prompt := mkValuePrompt ppProofState
+  let req : OpenAIChatRequest := {
+    model := reap.model.get (← getOptions),
+    messages := [ { role := "user", content := prompt } ],
+    n := 1,
+    temperature := (reap.temperature.get (← getOptions)).toFloat / 100.0,
+    max_tokens := reap.max_tokens.get (← getOptions),
+    logprobs := true
+  }
+  let mut result : Option ValueResult := none
+  let mut i := 0
+  while result.isNone && i < 3 do
+    -- try
+    i := i + 1
+    let res ← generator.valueClient.generateChat req
+    let res := parseChatResponseOpenAI res
+    IO.eprintln s!"===\nmvars : {mvarIds.map fun x => x.name}, state : {ppProofState}, score : {res}\n"
+    let res := Json.parse res[0]!.1
+    if let .ok res := res then
+      result := fromJson? res |>.toOption
+  return result.get!.score

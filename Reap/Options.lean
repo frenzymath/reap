@@ -8,6 +8,10 @@ register_option reap.ps_endpoint : String :=
   { defValue := "https://console.siflow.cn/siflow/auriga/skyinfer/ytwang/ps2-1"
     descr := "Endpoint for the premise selection service." }
 
+register_option reap.value_endpoint : String :=
+  { defValue := "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/ytwang/reap-1-7-value"
+    descr := "Endpoint for the value service." }
+
 register_option reap.llm_endpoint : String :=
   { defValue := "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/ytwang/reap-1-7b"
     descr := "Endpoint for the LLM service." }
