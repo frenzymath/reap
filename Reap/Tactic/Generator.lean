@@ -115,7 +115,6 @@ structure ValueResult where
   score : Float
 deriving Inhabited, FromJson
 
-/-- Pseudo value function for testing: returns a random Float in [-10, 10]. -/
 def generateValue (mvarIds : List MVarId) : MetaM Float := do
   let generator ← getClient
   let ppProofState := toString (← Meta.ppProofState mvarIds)
@@ -138,4 +137,4 @@ def generateValue (mvarIds : List MVarId) : MetaM Float := do
     let res := Json.parse res[0]!.1
     if let .ok res := res then
       result := fromJson? res |>.toOption
-  return result.get!.score
+  return -result.get!.score
