@@ -5,6 +5,7 @@ public meta import Lean.Meta.Tactic.TryThis
 
 public meta import Reap.Options
 public meta import Reap.Tactic.Generator
+public meta import Reap.Tactic.Search
 public meta import Reap.Future.PP
 public meta import TreeSearch
 
@@ -213,7 +214,7 @@ elab "reap" : tactic => do
 elab "reapBFS" : tactic => do
   let opts ← Lean.getOptions
   let maxGoals := reap.max_goals.get opts
-  proofSearchBFS TacticGenerator.generateTactics (some TacticGenerator.generateValue) maxGoals
+  Reap.TreeSearch.proofSearchBFS TacticGenerator.generateTactics (some TacticGenerator.generateValue) maxGoals
 
 elab "reapMCTS" : tactic => do
   let opts ← Lean.getOptions
