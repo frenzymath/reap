@@ -6,6 +6,7 @@ public meta import Lean.Meta.Tactic.TryThis
 public meta import Reap.Options
 public meta import Reap.Tactic.Generator
 public meta import Reap.Future.PP
+public meta import TreeSearch
 
 public meta section
 
@@ -205,19 +206,17 @@ Call the LLM on a goal, asking for suggestions beginning with a prefix.
 def reaper?Tac (gs : List MVarId) : MetaM (Array (String × Float)) :=
   TacticGenerator.generateTactics gs
 
-syntax "reap" : tactic
-elab_rules : tactic
-  | `(tactic | reap) => do
+elab "reap" : tactic => do
     let gs ← getUnsolvedGoals
     reaperTac gs
 
--- syntax "reap?" : tactic
--- elab_rules : tactic
---   | `(tactic | reap?%$tac) => do
---     addSuggestions tac (← liftMetaMAtMain reaper?Tac)
+elab "reapBFS" : tactic => do
+  let opts ← Lean.getOptions
+  let maxGoals := reap.max_goals.get opts
+  proofSearchBFS TacticGenerator.generateTactics (some TacticGenerator.generateValue) maxGoals
 
--- syntax "reap!" : tactic
--- elab_rules : tactic
---   | `(tactic | reap!) => do
---     let g ← getMainGoal
---     reaper!Tac g
+elab "reapMCTS" : tactic => do
+  let opts ← Lean.getOptions
+  let maxGoals := reap.max_goals.get opts
+  let maxSteps := reap.max_steps.get opts
+  Reap.TreeSearch.reapMCTS TacticGenerator.generateTactics TacticGenerator.generateValue maxGoals maxSteps
