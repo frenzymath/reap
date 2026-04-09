@@ -5,7 +5,7 @@ public meta import Lean.Meta.Tactic.TryThis
 
 public meta import Reap.Options
 public meta import Reap.Tactic.Generator
-public meta import Reap.Tactic.Search
+public meta import Reap.Tactic.TreeSearch
 public meta import Reap.Future.PP
 public meta import TreeSearch
 
