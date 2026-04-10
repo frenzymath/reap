@@ -40,6 +40,17 @@ def filterGeneration (s: String) : Bool :=
   let banned := ["sorry", "admit", "▅", "apply?", "exact?", "refine?", "calc?", "hint"]
   !(banned.any fun s' => (s.splitOn s').length > 1)
 
+def retryCoreM? (action : CoreM α) (maxRetries : Nat := 3) : CoreM (Option α) := do
+  let mut result : Option α := none
+  let mut i := 0
+  while result.isNone && i < maxRetries do
+    i := i + 1
+    try
+      result := some (← action)
+    catch _ =>
+      pure ()
+  return result
+
 def parseCompletionResponseOpenAI (res: OpenAICompletionResponse) : Array String :=
   (res.choices.map fun x => (x.text)).toArray
 
@@ -81,8 +92,8 @@ def getClient : CoreM TacticGenerator := do
 /-- Main function to generate tactics -/
 def generatePPTactics (ppGoal : String) : CoreM <| Array (String × Float) := do
   let generator ← getClient
-  let relatedTheorems ←
-    PremiseSelectionClient.getPremises ppGoal (reap.num_premises.get (← getOptions))
+  let relatedTheorems :=
+    (← retryCoreM? (PremiseSelectionClient.getPremises ppGoal (reap.num_premises.get (← getOptions)))).getD #[]
   let prompt := mkPrompt ppGoal relatedTheorems
   -- let mut results : Std.HashSet String := Std.HashSet.emptyWithCapacity
   let mut results : List (String × Float) := []
@@ -94,7 +105,7 @@ def generatePPTactics (ppGoal : String) : CoreM <| Array (String × Float) := do
     max_tokens := reap.max_tokens.get (← getOptions),
     logprobs := true
   }
-  let res ← generator.llmClient.generateChat req
+  let some res ← retryCoreM? (generator.llmClient.generateChat req) | return #[]
   for result in (parseChatResponseOpenAI res) do
     results := results.insert result
     -- logInfo m!"Generated tactic: {result.1} with probability {result.2}"
@@ -127,14 +138,14 @@ def generateValue (mvarIds : List MVarId) : MetaM Float := do
     max_tokens := reap.max_tokens.get (← getOptions),
     logprobs := true
   }
-  let mut result : Option ValueResult := none
-  let mut i := 0
-  while result.isNone && i < 3 do
-    -- try
-    i := i + 1
+  let result : Option ValueResult ← retryCoreM? (maxRetries := 3) do
     let res ← generator.valueClient.generateChat req
     let res := parseChatResponseOpenAI res
     let res := Json.parse res[0]!.1
     if let .ok res := res then
-      result := fromJson? res |>.toOption
+      match fromJson? res with
+      | .ok value => return value
+      | .error _ => throwError "Failed to decode value response"
+    else
+      throwError "Failed to parse value response as JSON"
   return -result.get!.score
