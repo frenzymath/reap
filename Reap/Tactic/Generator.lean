@@ -30,11 +30,11 @@ namespace TacticGenerator
 
 /-- Strip `<think>...</think>` prefix that some LLMs prepend to their responses. -/
 def stripThinkingPrefix (s : String) : String :=
-  let s := s.trimLeft
+  let s := s.trimAsciiStart.toString
   if s.startsWith "<think>" then
     let parts := s.splitOn "</think>"
     if parts.length > 1 then
-      (String.intercalate "</think>" (parts.drop 1)).trimLeft
+      (String.intercalate "</think>" (parts.drop 1)).trimAsciiStart.toString
     else s
   else s
 
