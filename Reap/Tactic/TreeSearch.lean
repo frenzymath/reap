@@ -1,8 +1,10 @@
 module
 public meta import Lean
+public meta import Reap.Tactic.WallClock
 public meta import TreeSearch.BestFirst
 public meta import TreeSearch.MCTS
 open Lean Meta Elab Tactic TreeSearch
+open Reap.WallClock
 
 public meta section
 
@@ -17,19 +19,20 @@ def withHeartbeats {m : Type _ → Type _} {α : Type _} [Monad m] [MonadWithRea
   withReader (fun s => { s with maxHeartbeats := heartbeats })
 
 def evalTacticStr (str : String) (heartbeats : Nat) : TacticM (Option Tactic.SavedState) := do
-  let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return none
-  try
-    let success ← tryCatchRuntimeEx (handler := fun _ => return false) do
-      withHeartbeats heartbeats <| evalTactic stx
-      return true
-    if success then
-      pruneSolvedGoals
-      if (← getThe Core.State).messages.hasErrors then
+  withCumulativeWallClockTime "reap.wall.tactic_eval" do
+    let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return none
+    try
+      let success ← tryCatchRuntimeEx (handler := fun _ => return false) do
+        withHeartbeats heartbeats <| evalTactic stx
+        return true
+      if success then
+        pruneSolvedGoals
+        if (← getThe Core.State).messages.hasErrors then
+          return none
+      else
         return none
-    else
-      return none
-  catch _ => return none
-  return ← Tactic.saveState
+    catch _ => return none
+    return ← Tactic.saveState
 
 def getGoalTypes (ss : Tactic.SavedState) : TacticM (Option (Array Expr)) := do
   ss.restore
@@ -129,20 +132,21 @@ In the future, we may want to move it to a more appropriate namespace.
 -/
 def proofSearchBFS (tg : TacGen) (se : Option StateEval)
     (maxNodes := BestFirst.defaultMaxNodes) : TacticM Unit := do
-  let (k, nodes) ← bestFirstSearch NodeData.priority NodeData.isTerminal
-    (expand tg se) (.ok (← Tactic.saveState) 0.0) maxNodes
-  let ppNodes ← nodes.mapM ppNode
-  let info := json%{
-    solution : $k,
-    nodes : $ppNodes
-   }
+  withCumulativeWallClockTime "reap.wall.bfs.total" do
+    let (k, nodes) ← bestFirstSearch NodeData.priority NodeData.isTerminal
+      (expand tg se) (.ok (← Tactic.saveState) 0.0) maxNodes
+    let ppNodes ← nodes.mapM ppNode
+    let info := json%{
+      solution : $k,
+      nodes : $ppNodes
+    }
+    -- Do something with the JSON data
+    IO.println info
 
-  -- Do something with the JSON data
-  IO.println info
-
-  if let some k := k then
-    let some {data := .ok state _, ..} := nodes[k]? | unreachable!
-    state.restore
+    if let some k := k then
+      let some {data := .ok state _, ..} := nodes[k]? | unreachable!
+      state.restore
+  printCumulativeWallClockTimes
 
 end BFS
 
@@ -231,26 +235,28 @@ open MCTS in
 def reapMCTS (tg : TacGen) (se : StateEval)
     (maxNodes := MCTS.defaultMaxNodes)
     (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := do
-  let (k, nodes) ← monteCarloTreeSearch
-    (fun x => x.isTerminal)
-    (expand tg se)
-    (fun x => return selectChild x)
-    (fun _ e _ => return updateEdge e)
-    (fun x => return updateNode x)
-    (NodeData.ok (← Tactic.saveState) 0.0)
-    maxNodes maxSteps
+  withCumulativeWallClockTime "reap.wall.mcts.total" do
+    let (k, nodes) ← monteCarloTreeSearch
+      (fun x => x.isTerminal)
+      (expand tg se)
+      (fun x => return selectChild x)
+      (fun _ e _ => return updateEdge e)
+      (fun x => return updateNode x)
+      (NodeData.ok (← Tactic.saveState) 0.0)
+      maxNodes maxSteps
 
-  let ppNodes ← nodes.mapM ppNode
-  let info := json%{
-    solution : $k,
-    nodes : $ppNodes
-   }
+    let ppNodes ← nodes.mapM ppNode
+    let info := json%{
+      solution : $k,
+      nodes : $ppNodes
+    }
+    -- Do something with the JSON data
+    IO.println info
 
-  -- Do something with the JSON data
-  IO.println info
+    if let some k := k then
+      let some {data := .ok state _, ..} := nodes[k]? | unreachable!
+      state.restore
 
-  if let some k := k then
-    let some {data := .ok state _, ..} := nodes[k]? | unreachable!
-    state.restore
+  printCumulativeWallClockTimes
 
 end Reap.TreeSearch
