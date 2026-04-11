@@ -14,8 +14,6 @@ deriving ToJson, FromJson
 structure PremiseSelectionResult where
   formal_name : String
   formal_statement : String
-  informal_statement : String
-  informal_name : String
 deriving ToJson, FromJson, Repr
 
 structure PremiseSelectionClient where

@@ -216,10 +216,10 @@ elab "reapBFS" : tactic => do
   let maxGoals := reap.max_goals.get opts
   let useValueModel := reap.use_value_model.get opts
   let se := if useValueModel then some TacticGenerator.generateValue else none
-  Reap.TreeSearch.BFS.proofSearchBFS TacticGenerator.generateTactics se maxGoals
+  Reap.TreeSearch.BFS.proofSearchBFS TacticGenerator.generateTacticsWithPremises se maxGoals
 
 elab "reapMCTS" : tactic => do
   let opts ← Lean.getOptions
   let maxGoals := reap.max_goals.get opts
   let maxSteps := reap.max_steps.get opts
-  Reap.TreeSearch.reapMCTS TacticGenerator.generateTactics TacticGenerator.generateValue maxGoals maxSteps
+  Reap.TreeSearch.reapMCTS TacticGenerator.generateTacticsWithPremises TacticGenerator.generateValue maxGoals maxSteps
