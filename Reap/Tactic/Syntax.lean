@@ -214,7 +214,7 @@ elab "reap" : tactic => do
 elab "reapBFS" : tactic => do
   let opts ← Lean.getOptions
   let maxGoals := reap.max_goals.get opts
-  Reap.TreeSearch.proofSearchBFS TacticGenerator.generateTactics (some TacticGenerator.generateValue) maxGoals
+  Reap.TreeSearch.BFS.proofSearchBFS TacticGenerator.generateTactics (some TacticGenerator.generateValue) maxGoals
 
 elab "reapMCTS" : tactic => do
   let opts ← Lean.getOptions
