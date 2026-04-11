@@ -178,7 +178,7 @@ def expand (tg : TacGen) (se : StateEval) (node : NodeType) : TacticM (Array (Ed
         s'.restore
         -- TODO: figure out initialization of nodes
         let score ← se (← getUnsolvedGoals)
-        ret := ret.push (⟨ t, p, 0 ⟩, .ok s' score)
+        ret := ret.push (⟨ t, p, 1 ⟩, .ok s' score)
       else
         ret := ret.push (⟨ t, 0, 0 ⟩, .error "")
 
@@ -188,8 +188,8 @@ def expand (tg : TacGen) (se : StateEval) (node : NodeType) : TacticM (Array (Ed
 
 def c_base := 1.0
 def c_init := 0.0
-def gamma := 1.0
-def temperature := 1.0
+def visit_discount := 1.0
+def prior_temperature := 1.0
 
 def computeScores (node : NodeType) : Array Float :=
   let N := node.children.map (fun (e, _) => e.visit) |>.sum
@@ -197,8 +197,8 @@ def computeScores (node : NodeType) : Array Float :=
   let c := c_init + Float.log ((N.toFloat + c_base + 1) / c_base)
   node.children.map fun (e, n) =>
     if let .ok _ score := n then
-      Float.exp (-gamma * (score + 1)) +
-        c * Float.pow e.prior temperature * N.toFloat.sqrt / (e.visit.toFloat + 1)
+      Float.exp (-visit_discount * (score + 1)) +
+        c * Float.pow e.prior prior_temperature * N.toFloat.sqrt / (e.visit.toFloat + 1)
     else
       -Float.inf
 
@@ -207,7 +207,7 @@ def selectChild (node : NodeType) : Option Nat :=
   -- I could not find a convenient way in Std to compute argmax of an array
   Id.run do
     let mut bestIdx := none
-    let mut bestScore := 0.0
+    let mut bestScore := -Float.inf
     for (score, i) in scores.zipIdx do
       if score > bestScore then
         bestIdx := some i
