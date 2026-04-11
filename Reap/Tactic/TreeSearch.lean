@@ -57,7 +57,7 @@ def unifyTypes (t₁ t₂ : Array Expr) : TacticM Bool := do
       break
   return ret
 
-def isTerminal (ss : Tactic.SavedState) : TacticM Bool := do
+def isSolved (ss : Tactic.SavedState) : TacticM Bool := do
   ss.restore
   return (← getUnsolvedGoals).isEmpty
 
@@ -72,14 +72,14 @@ namespace NodeData
 def priority : NodeData → TacticM Float
   | .error _ => return Float.inf
   | .ok state score => do
-      if ← isTerminal state then
+      if ← isSolved state then
         return Float.inf
       else
         return score
 
 def isTerminal : NodeData → TacticM Bool
   | .error _ => pure false
-  | .ok state _ => TreeSearch.isTerminal state
+  | .ok state _ => TreeSearch.isSolved state
 
 def restore : NodeData → TacticM Unit
   | .error _ => pure ()
