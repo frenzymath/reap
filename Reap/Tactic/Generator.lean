@@ -92,7 +92,7 @@ def getClient : CoreM TacticGenerator := do
   }
 
 /-- Main function to generate tactics -/
-def generatePPTactics (ppGoal : String) : CoreM <| Array (String × Float) := do
+def generatePPTactics (ppGoal : String) : CoreM (Array PremiseSelectionResult × Array (String × Float)) := do
   let opts ← getOptions
   withCumulativeWallClockTime "reap.wall.tactic_gen" do
     let generator ← getClient
@@ -111,14 +111,14 @@ def generatePPTactics (ppGoal : String) : CoreM <| Array (String × Float) := do
       max_tokens := reap.max_tokens.get opts,
       logprobs := true
     }
-    let some res ← retryCoreM? (generator.llmClient.generateChat req) | return #[]
+    let some res ← retryCoreM? (generator.llmClient.generateChat req) | return (#[], #[])
     for result in (parseChatResponseOpenAI res) do
       results := results.insert result
       -- logInfo m!"Generated tactic: {result.1} with probability {result.2}"
     results := results.eraseDupsBy (fun x y => x.1 == y.1)
     let finalResults := (results.toArray.filter fun x => filterGeneration x.1)
     -- let finalResults := (results.toArray.filter filterGeneration).map fun x => (x, 1.0)
-    return finalResults
+    return (relatedTheorems, finalResults)
 
 def Meta.ppProofState (mvarIds : List MVarId) : MetaM Format := do
   return Std.Format.joinSep (← mvarIds.mapM (Meta.ppGoal)) "\n".toFormat
@@ -126,7 +126,12 @@ def Meta.ppProofState (mvarIds : List MVarId) : MetaM Format := do
 
 def generateTactics (mvarIds : List MVarId) : MetaM <| Array (String × Float) := do
   let ppProofState := toString (← Meta.ppProofState mvarIds)
-  generatePPTactics ppProofState
+  return (← generatePPTactics ppProofState).2
+
+def generateTacticsWithPremises (mvarIds : List MVarId) : MetaM <| Array (String × Array PremiseSelectionResult × Float) := do
+  let ppProofState := toString (← Meta.ppProofState mvarIds)
+  let (ps, res) ← generatePPTactics ppProofState
+  return res.map fun (x, y) => (x, ps, y)
 
 structure ValueResult where
   score : Float

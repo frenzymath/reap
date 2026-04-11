@@ -1,5 +1,6 @@
 module
 public meta import Lean
+public meta import Reap.PremiseSelection.API
 public meta import Reap.Tactic.WallClock
 public meta import TreeSearch.BestFirst
 public meta import TreeSearch.MCTS
@@ -69,7 +70,7 @@ def isSolved (ss : Tactic.SavedState) : TacticM Bool := do
   ss.restore
   return (← getUnsolvedGoals).isEmpty
 
-abbrev TacGen := List MVarId → MetaM (Array (String × Float))
+abbrev TacGen := List MVarId → MetaM (Array (String × Array PremiseSelectionResult × Float))
 abbrev StateEval := List MVarId → MetaM Float
 
 inductive NodeData where
@@ -117,7 +118,7 @@ def expand (tg : TacGen) (se : Option StateEval) : NodeData → TacticM (Array (
   | .ok state score => do
     state.restore
     let tactics ← tg (← getUnsolvedGoals)
-    tactics.mapM fun (t, Δp) => do
+    tactics.mapM fun (t, _, Δp) => do
       state.restore
       if let some s' ← evalTacticStr t (reap.heartbeats.get (← getOptions)) then
         -- TODO: merge nodes
@@ -161,6 +162,7 @@ namespace MCTS
 
 structure EdgeData where
   tacticStr : String
+  premise : Array PremiseSelectionResult
   prior : Float
   visit : Nat := 0
 deriving ToJson
@@ -172,15 +174,15 @@ def expand (tg : TacGen) (se : StateEval) (node : NodeType) : TacticM (Array (Ed
     let mut ret := #[]
     s₀.restore
     let tactics ← tg (← getUnsolvedGoals)
-    for (t, p) in tactics do
+    for (t, ps, p) in tactics do
       s₀.restore
       if let some s' ← evalTacticStr t (reap.heartbeats.get (← getOptions)) then
         s'.restore
         -- TODO: figure out initialization of nodes
         let score ← se (← getUnsolvedGoals)
-        ret := ret.push (⟨ t, p, 1 ⟩, .ok s' score)
+        ret := ret.push (⟨ t, ps, p, 1 ⟩, .ok s' score)
       else
-        ret := ret.push (⟨ t, 0, 0 ⟩, .error "")
+        ret := ret.push (⟨ t, #[], 0, 0 ⟩, .error "")
 
     return ret
   else
