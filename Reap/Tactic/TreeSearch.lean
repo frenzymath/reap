@@ -34,6 +34,14 @@ def evalTacticStr (str : String) (heartbeats : Nat) : TacticM (Option Tactic.Sav
     catch _ => return none
     return ← Tactic.saveState
 
+def communicate (obj : Json) : IO Unit :=
+  -- HACK: communicate the search tree to parent process in an unnecessarily complicated way
+  -- since Lean devs think they are so smart, and we (other devs) don't know what we want
+  try
+    IO.FS.withFile "/dev/fd/3" .write fun h =>
+      h.putStrLn obj.compress
+  catch _ => return ()
+
 def getGoalTypes (ss : Tactic.SavedState) : TacticM (Option (Array Expr)) := do
   ss.restore
   let goals ← getUnsolvedGoals
@@ -140,8 +148,7 @@ def proofSearchBFS (tg : TacGen) (se : Option StateEval)
       solution : $k,
       nodes : $ppNodes
     }
-    -- Do something with the JSON data
-    IO.println info
+    communicate info
 
     if let some k := k then
       let some {data := .ok state _, ..} := nodes[k]? | unreachable!
@@ -250,8 +257,7 @@ def reapMCTS (tg : TacGen) (se : StateEval)
       solution : $k,
       nodes : $ppNodes
     }
-    -- Do something with the JSON data
-    IO.println info
+    communicate info
 
     if let some k := k then
       let some {data := .ok state _, ..} := nodes[k]? | unreachable!
