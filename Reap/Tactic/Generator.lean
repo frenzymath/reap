@@ -86,7 +86,7 @@ Assistant:"
 
 def getClient : CoreM TacticGenerator := do
   return {
-    llmClient := ⟨reap.llm_endpoint.get (← getOptions), reap.llm_api_key.get (← getOptions)⟩
+    llmClient := ⟨reap.policy_endpoint.get (← getOptions), reap.llm_api_key.get (← getOptions)⟩
     valueClient := ⟨reap.value_endpoint.get (← getOptions), reap.llm_api_key.get (← getOptions)⟩
     premiseSelectionClient := ⟨reap.ps_endpoint.get (← getOptions)⟩
   }
