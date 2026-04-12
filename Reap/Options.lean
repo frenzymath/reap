@@ -16,7 +16,7 @@ register_option reap.use_value_model : Bool :=
   { defValue := true
     descr := "Whether to use the value model service." }
 
-register_option reap.llm_endpoint : String :=
+register_option reap.policy_endpoint : String :=
   { defValue := "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/ytwang/reap-1-7b/v1"
     descr := "Endpoint for the LLM service." }
 
