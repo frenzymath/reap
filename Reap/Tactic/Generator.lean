@@ -38,6 +38,15 @@ def stripThinkingPrefix (s : String) : String :=
     else s
   else s
 
+/-- Remove a few common non-tactic prefixes emitted by generic chat models. -/
+def normalizeGeneration (s : String) : String :=
+  let s := stripThinkingPrefix s
+  let s := s.trimAsciiStart.toString
+  if s.startsWith "<;>" then
+    (String.intercalate "<;>" ((s.splitOn "<;>").drop 1)).trimAsciiStart.toString
+  else
+    s
+
 def filterGeneration (s: String) : Bool :=
   let banned := ["sorry", "admit", "▅", "apply?", "exact?", "refine?", "calc?", "hint"]
   !(banned.any fun s' => (s.splitOn s').length > 1)
@@ -57,32 +66,42 @@ def parseCompletionResponseOpenAI (res: OpenAICompletionResponse) : Array String
   (res.choices.map fun x => (x.text)).toArray
 
 def parseChatResponseOpenAI (res: OpenAIChatResponse) : Array (String × Float) :=
-  (res.choices.map fun x => (stripThinkingPrefix x.message.content, x.computeLogProbability)).toArray
+  (res.choices.map fun x => (normalizeGeneration x.message.content, x.computeLogProbability)).toArray
 
-def mkValuePrompt (tacticState : String) : String :=
-  "Please estimate how many tactic steps are required to solve this proof state in Lean.
-STATE:
-" ++ tacticState
+def normalizeCandidatePriors (xs : Array (String × Float)) : Array (String × Float) :=
+  if xs.isEmpty then
+    #[]
+  else
+    let maxLogprob := xs.foldl (init := xs[0]!.2) fun acc (_, logprob) => max acc logprob
+    let weights := xs.map fun (_, logprob) => Float.exp (logprob - maxLogprob)
+    let total := weights.foldl (init := (0.0 : Float)) fun acc weight => acc + weight
+    if total <= (0.0 : Float) then
+      let uniform := 1.0 / xs.size.toFloat
+      xs.map fun (tactic, _) => (tactic, uniform)
+    else
+      (xs.zipIdx.map fun | ((tactic, _), i) => (tactic, weights[i]! / total))
 
-def mkRelatedTheorem (_id: Nat) (ps : PremiseSelectionResult) : String :=
+def mkRelatedTheorem (id: Nat) (ps : PremiseSelectionResult) : String :=
   let formalName := ps.formal_name
-  -- let informalName := ps.informal_name
+  let informalName := ps.informal_name
   let formalStatement := ps.formal_statement
-  -- "ID: " ++ toString id ++ "\n" ++
+  "ID: " ++ toString id ++ "\n" ++
   "Formal name: " ++ formalName ++ "\n" ++
-  -- "Informal name: " ++ informalName ++ "\n" ++
+  "Informal name: " ++ informalName ++ "\n" ++
   "Formal statement: " ++ formalStatement
 
 def mkPrompt (tacticState : String) (relatedTheorems: Array PremiseSelectionResult) : String :=
   "User: Please generate a tactic in lean4 to solve the state.
 Here're some theorems that may be helpful:
-" ++ (Array.mapIdx' mkRelatedTheorem relatedTheorems |>.joinSep "\n") ++
-"
+" ++ (Array.mapIdx' mkRelatedTheorem relatedTheorems |>.joinSep "\n") ++ "
 STATE:
 " ++ tacticState ++ "
 TACTIC:
 
 Assistant:"
+
+def mkValuePrompt (tacticState : String) (relatedTheorems: Array PremiseSelectionResult) : String :=
+  mkPrompt tacticState relatedTheorems
 
 def getClient : CoreM TacticGenerator := do
   return {
@@ -96,10 +115,8 @@ def generatePPTactics (ppGoal : String) : CoreM (Array PremiseSelectionResult ×
   let opts ← getOptions
   withCumulativeWallClockTime "reap.wall.tactic_gen" do
     let generator ← getClient
-    let relatedTheorems ← withCumulativeWallClockTime "reap.wall.premise_select" do
-      pure <|
-        (← retryCoreM?
-          (PremiseSelectionClient.getPremises ppGoal (reap.num_premises.get opts))).getD #[]
+    let relatedTheorems ←
+      PremiseSelectionClient.getPremises ppGoal (reap.num_premises.get opts)
     let prompt := mkPrompt ppGoal relatedTheorems
     -- let mut results : Std.HashSet String := Std.HashSet.emptyWithCapacity
     let mut results : List (String × Float) := []
@@ -116,20 +133,24 @@ def generatePPTactics (ppGoal : String) : CoreM (Array PremiseSelectionResult ×
       results := results.insert result
       -- logInfo m!"Generated tactic: {result.1} with probability {result.2}"
     results := results.eraseDupsBy (fun x y => x.1 == y.1)
-    let finalResults := (results.toArray.filter fun x => filterGeneration x.1)
+    let finalResults :=
+      normalizeCandidatePriors <| (results.toArray.filter fun x => filterGeneration x.1)
     -- let finalResults := (results.toArray.filter filterGeneration).map fun x => (x, 1.0)
     return (relatedTheorems, finalResults)
 
-def Meta.ppProofState (mvarIds : List MVarId) : MetaM Format := do
-  return Std.Format.joinSep (← mvarIds.mapM (Meta.ppGoal)) "\n".toFormat
+def Meta.ppProofState (mvarIds : List MVarId) : MetaM String := do
+  let goals ← mvarIds.mapM fun mvarId => do
+    let ppGoal := toString (← Meta.ppGoal mvarId)
+    return ppGoal
+  return String.intercalate "\n\n" goals
 
 
 def generateTactics (mvarIds : List MVarId) : MetaM <| Array (String × Float) := do
-  let ppProofState := toString (← Meta.ppProofState mvarIds)
+  let ppProofState ← Meta.ppProofState mvarIds
   return (← generatePPTactics ppProofState).2
 
 def generateTacticsWithPremises (mvarIds : List MVarId) : MetaM <| Array (String × Array PremiseSelectionResult × Float) := do
-  let ppProofState := toString (← Meta.ppProofState mvarIds)
+  let ppProofState ← Meta.ppProofState mvarIds
   let (ps, res) ← generatePPTactics ppProofState
   return res.map fun (x, y) => (x, ps, y)
 
@@ -141,8 +162,10 @@ def generateValue (mvarIds : List MVarId) : MetaM Float := do
   let opts ← getOptions
   withCumulativeWallClockTime "reap.wall.value" do
     let generator ← getClient
-    let ppProofState := toString (← Meta.ppProofState mvarIds)
-    let prompt := mkValuePrompt ppProofState
+    let ppProofState ← Meta.ppProofState mvarIds
+    let relatedTheorems ←
+      PremiseSelectionClient.getPremises ppProofState (reap.num_premises.get opts)
+    let prompt := mkValuePrompt ppProofState relatedTheorems
     let req : OpenAIChatRequest := {
       model := reap.model.get opts,
       messages := [ { role := "user", content := prompt } ],
@@ -161,4 +184,4 @@ def generateValue (mvarIds : List MVarId) : MetaM Float := do
         | .error _ => throwError "Failed to decode value response"
       else
         throwError "Failed to parse value response as JSON"
-    return -result.get!.score
+    return result.get!.score
