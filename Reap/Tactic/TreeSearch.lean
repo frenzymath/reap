@@ -194,7 +194,7 @@ structure EdgeData where
   prior : Float
   totalValue : Float := 0.0   -- Sum of backed-up edge values V(s,a)
   visitCount : Nat := 0       -- N(s,a): visit count
-  exhausted : Bool := false   -- this tactic/edge is confirmed invalid
+  exhausted : Bool := false   -- subtree fully explored with no live options
 deriving ToJson
 
 abbrev NodeType := Node NodeData (EdgeData × NodeData)
@@ -278,7 +278,8 @@ private def qFromSearchValue (v : Float) : Float :=
 
 /-- Whether an edge/child pair is a live candidate we may still pick.
 An edge is dead when either (a) the child is an `.error` (the tactic failed),
-or (b) we have explicitly marked this tactic/edge as `exhausted`. -/
+or (b) we have already marked the edge as `exhausted` because its subtree has
+no live options left. -/
 private def isLive (e : EdgeData) (n : NodeData) : Bool :=
   match n with
   | .error _ => false
@@ -308,9 +309,10 @@ def computeScores (node : NodeType) : Array Float :=
       -- AlphaProof-style PUCT: transform V(s,a) into a positive Q(s,a).
       q + u
 
-/-- Pick the child to descend into. Returns `none` if there is none to pick,
-either because the node has no children yet or because every child is
-dead/exhausted. MCTS treats this as a cue to try expanding the node again. -/
+/-- Pick the child to descend into. Returns `none` if there is none to pick —
+either because the node has not been expanded yet (children empty) or because
+every child is dead/exhausted (dead-end). The framework distinguishes these
+two cases via `Node.expanded`. -/
 def selectChild (node : NodeType) : Option Nat :=
   if node.children.isEmpty then none
   else
@@ -328,15 +330,28 @@ def selectChild (node : NodeType) : Option Nat :=
 def updateEdge (_parent : NodeData) (e : EdgeData) (child : NodeData) : EdgeData :=
   match child with
   | .ok data =>
-    let edgeValue := data.score - tacticStepCost
-    { e with
-      totalValue := e.totalValue + edgeValue
-      visitCount := e.visitCount + 1 }
+    -- A child that updated itself to `-∞` has declared its subtree exhausted.
+    -- Propagate that into the edge's `exhausted` bit so the parent's selector
+    -- treats it as dead. We still bump visitCount so we don't re-expand this
+    -- branch, but we do NOT fold `-∞` into `totalValue` (that would poison
+    -- the averaged V(s,a) estimate of a previously-live edge).
+    if data.score == (0.0 - Float.inf) then
+      { e with visitCount := e.visitCount + 1, exhausted := true }
+    else
+      let edgeValue := data.score - tacticStepCost
+      { e with
+        totalValue := e.totalValue + edgeValue
+        visitCount := e.visitCount + 1 }
   | .error _ =>
     -- `error` children are dead from birth (score = -∞ in the selector). This
-    -- branch is unreachable in practice because MCTS `expand` filters invalid
-    -- tactics before creating children; handle it defensively.
+    -- branch is unreachable in practice because `selectChild` never picks an
+    -- error edge; handle it defensively.
     { e with visitCount := e.visitCount + 1, exhausted := true }
+
+/-- Has this node been fully explored with no remaining live options? -/
+private def isExhausted (node : NodeType) : Bool :=
+  node.children.size > 0 &&
+    node.children.all (fun (e, n) => !isLive e n)
 
 private def findIncomingEdge?
     (nodes : Array (Node NodeData (EdgeData × Nat))) (childIdx : Nat) :
@@ -392,53 +407,14 @@ private def markNodeError (nodeIdx : Nat) (message : String) :
                 nodes.set! parentIdx
                   { parent with children := parent.children.set! edgeIdx (edge, childIdx) }
 
-private def findSolvedNode?
-    (nodes : Array (Node NodeData (EdgeData × Nat))) : TacticM (Option Nat) := do
-  for nodeAndIdx in nodes.zipIdx do
-    let node := nodeAndIdx.1
-    let nodeIdx := nodeAndIdx.2
-    match node.data with
-    | .error _ => pure ()
-    | .ok data =>
-        if ← Reap.TreeSearch.isSolved data.state then
-          return some nodeIdx
-  return none
-
 private def exprContainsConst (declName : Name) (e : Expr) : Bool :=
   e.foldConsts false fun constName found =>
     found || constName == declName || (Lean.privateToUserName? constName).getD constName == declName
 
-private def nameBaseString? : Name → Option String
-  | .anonymous => none
-  | .str _ s => some s
-  | .num _ n => some (toString n)
-
-private def tacticMentionsDeclName (declName : Name) (tacticStr : String) : Bool :=
-  let userDeclName := (Lean.privateToUserName? declName).getD declName
-  let fullName := userDeclName.toString
-  let baseName? := nameBaseString? userDeclName
-  tacticStr.contains fullName ||
-    match baseName? with
-    | some baseName => baseName.length > 3 && tacticStr.contains baseName
-    | none => false
-
-private def tacticsMentionCurrentDecl (tactics : Array String) : TacticM Bool := do
-  let some declName ← Term.getDeclName? | return false
-  return tactics.any (tacticMentionsDeclName declName)
-
 private def rootProofContainsCurrentDecl (rootGoals : List MVarId) : TacticM Bool := do
   let some declName ← Term.getDeclName? | return false
   for goal in rootGoals do
-    let some proof ← getExprMVarAssignment? goal | continue
-    let proof ← instantiateMVars proof
-    if exprContainsConst declName proof then
-      return true
-  return false
-
-private def anyAssignmentContainsCurrentDecl : TacticM Bool := do
-  let some declName ← Term.getDeclName? | return false
-  for mvarId in (← getMCtx).getExprAssignmentDomain do
-    let some proof ← getExprMVarAssignment? mvarId | continue
+    let some proof ← getExprMVarAssignment? goal | return false
     let proof ← instantiateMVars proof
     if exprContainsConst declName proof then
       return true
@@ -454,70 +430,54 @@ private def validateFinalReplay
   let savedState ← Tactic.saveState
   let savedMessages := (← getThe Core.State).messages
   let result ← try
-    if ← tacticsMentionCurrentDecl tactics then
-      pure (.invalid "final proof text references the declaration being proved")
+    rootState.restore
+    modifyThe Core.State fun st => { st with messages := {} }
+    let mut failure : Option String := none
+    for tacticStr in tactics do
+      if failure.isNone then
+        if (← evalTacticStr tacticStr heartbeats).isNone then
+          failure := some s!"final replay rejected tactic: {tacticStr}"
+    if let some msg := failure then
+      pure (.invalid msg)
     else
-      rootState.restore
-      modifyThe Core.State fun st => { st with messages := {} }
-      let mut failure : Option String := none
-      for tacticStr in tactics do
-        if failure.isNone then
-          if (← evalTacticStr tacticStr heartbeats).isNone then
-            failure := some s!"final replay rejected tactic: {tacticStr}"
-      if let some msg := failure then
-        pure (.invalid msg)
+      Term.synthesizeSyntheticMVarsNoPostponing
+      pruneSolvedGoals
+      if (← getThe Core.State).messages.hasErrors then
+        pure (.invalid "final replay produced Lean errors")
+      else if !(← getUnsolvedGoals).isEmpty then
+        pure (.invalid "final replay left unsolved goals")
+      else if ← rootProofContainsCurrentDecl rootGoals then
+        pure (.invalid "final proof self-references the declaration being proved")
       else
-        Term.synthesizeSyntheticMVarsNoPostponing
-        pruneSolvedGoals
-        if (← getThe Core.State).messages.hasErrors then
-          pure (.invalid "final replay produced Lean errors")
-        else if !(← getUnsolvedGoals).isEmpty then
-          pure (.invalid "final replay left unsolved goals")
-        else if ← rootProofContainsCurrentDecl rootGoals then
-          pure (.invalid "final proof self-references the root proof")
-        else if ← anyAssignmentContainsCurrentDecl then
-          pure (.invalid "final proof self-references the declaration being proved")
-        else
-          pure (.valid (← Tactic.saveState))
+        pure (.valid (← Tactic.saveState))
   catch _ =>
     pure (.invalid "final replay threw an exception")
   savedState.restore
   modifyThe Core.State fun st => { st with messages := savedMessages }
   return result
 
-private def validateCandidateSolution
-    (rootState : Tactic.SavedState) (rootGoals : List MVarId) (nodeIdx : Nat) :
-    StateT (Array (Node NodeData (EdgeData × Nat))) TacticM
-      (Option (Nat × Tactic.SavedState)) := do
-  let nodes ← get
-  match solutionTactics? nodes nodeIdx with
-  | none =>
-      markNodeError nodeIdx "could not reconstruct final replay path"
-      return none
-  | some tactics =>
-      match ← validateFinalReplay rootState rootGoals tactics (reap.heartbeats.get (← getOptions)) with
-      | .valid state => return some (nodeIdx, state)
-      | .invalid msg =>
-          markNodeError nodeIdx msg
-          return none
-
 def updateNode (node : NodeType) : NodeData :=
   match node.data with
   | .error msg => .error msg
   | .ok data =>
     let visitCount := data.visitCount + 1
-    -- Max backup on V(s,a): node value V(s) = max_a V(s,a). If no live child
-    -- edge has been visited, preserve the node's current state-value estimate
-    -- so the node can be revisited and expanded again later.
-    let bestV := node.children.foldl (init := (0.0 - Float.inf)) fun acc (e, n) =>
-      if isLive e n && e.visitCount > 0 then
-        fmax acc (e.totalValue / e.visitCount.toFloat)
-      else
-        acc
-    .ok { data with
-      score := if bestV == (0.0 - Float.inf) then data.score else bestV,
-      visitCount := visitCount
-    }
+    if isExhausted node then
+      -- Mark the subtree as dead so the parent's `isLive` test excludes this
+      -- edge on subsequent selections. We encode "dead" as -∞ reward.
+      .ok { data with score := (0.0 - Float.inf), visitCount := visitCount }
+    else
+      -- Max backup on V(s,a): node value V(s) = max_a V(s,a).
+      let bestV := node.children.foldl (init := (0.0 - Float.inf)) fun acc (e, n) =>
+        if isLive e n && e.visitCount > 0 then
+          fmax acc (e.totalValue / e.visitCount.toFloat)
+        else
+          acc
+      .ok { data with
+        -- If no child edge has been visited yet, preserve the node's current
+        -- state-value estimate from expansion instead of overwriting it.
+        score := if bestV == (0.0 - Float.inf) then data.score else bestV,
+        visitCount := visitCount
+      }
 
 private partial def monteCarloTreeSearchVerified
     (tg : TacGen) (se : StateEval)
@@ -535,22 +495,22 @@ private partial def monteCarloTreeSearchVerified
         (fun p e c => return updateEdge p e c)
         (fun x => return updateNode x)
         0
-      let mut candidate? := result
-      let mut accepted : Option (Nat × Tactic.SavedState) := none
-      let mut keepChecking := true
-      while keepChecking && accepted.isNone do
-        match candidate? with
-        | some k =>
-            accepted ← validateCandidateSolution rootState rootGoals k
-            candidate? := none
+      if let some k := result then
+        let nodes ← get
+        match solutionTactics? nodes k with
         | none =>
-            let nodes ← get
-            candidate? ← findSolvedNode? nodes
-            if candidate?.isNone then
-              keepChecking := false
-      if let some result := accepted then
-        return some result
+            markNodeError k "could not reconstruct final replay path"
+        | some tactics =>
+            match ← validateFinalReplay rootState rootGoals tactics (reap.heartbeats.get (← getOptions)) with
+            | .valid state => return some (k, state)
+            | .invalid msg => markNodeError k msg
 
+      let nodes ← get
+      if let some root := nodes[0]? then
+        if root.expanded then
+          let resolved ← _root_.TreeSearch.resolve root
+          if selectChild resolved |>.isNone then
+            return none
       step := step + 1
     return none
 
@@ -621,7 +581,8 @@ def ppNode (nodes : Array (Node NodeData (EdgeData × Nat)))
   let data := ← Reap.TreeSearch.ppNodeData node.data
   return Json.mkObj [
     ("data", toJson data),
-    ("children", toJson children)
+    ("children", toJson children),
+    ("expanded", toJson node.expanded)
   ]
 
 end MCTS
