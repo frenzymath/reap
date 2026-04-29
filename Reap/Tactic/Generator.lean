@@ -59,6 +59,19 @@ def parseCompletionResponseOpenAI (res: OpenAICompletionResponse) : Array String
 def parseChatResponseOpenAI (res: OpenAIChatResponse) : Array (String × Float) :=
   (res.choices.map fun x => (stripThinkingPrefix x.message.content, x.computeLogProbability)).toArray
 
+def normalizeCandidatePriors (xs : Array (String × Float)) : Array (String × Float) :=
+  if xs.isEmpty then
+    #[]
+  else
+    let maxLogprob := xs.foldl (init := xs[0]!.2) fun acc (_, logprob) => max acc logprob
+    let weights := xs.map fun (_, logprob) => Float.exp (logprob - maxLogprob)
+    let total := weights.foldl (init := (0.0 : Float)) fun acc weight => acc + weight
+    if total <= (0.0 : Float) then
+      let uniform := 1.0 / xs.size.toFloat
+      xs.map fun (tactic, _) => (tactic, uniform)
+    else
+      xs.zipIdx.map fun ((tactic, _), i) => (tactic, weights[i]! / total)
+
 def mkValuePrompt (tacticState : String) : String :=
   "Please estimate how many tactic steps are required to solve this proof state in Lean.
 STATE:
@@ -116,7 +129,8 @@ def generatePPTactics (ppGoal : String) : CoreM (Array PremiseSelectionResult ×
       results := results.insert result
       -- logInfo m!"Generated tactic: {result.1} with probability {result.2}"
     results := results.eraseDupsBy (fun x y => x.1 == y.1)
-    let finalResults := (results.toArray.filter fun x => filterGeneration x.1)
+    let finalResults :=
+      normalizeCandidatePriors <| results.toArray.filter fun x => filterGeneration x.1
     -- let finalResults := (results.toArray.filter filterGeneration).map fun x => (x, 1.0)
     return (relatedTheorems, finalResults)
 
@@ -161,4 +175,4 @@ def generateValue (mvarIds : List MVarId) : MetaM Float := do
         | .error _ => throwError "Failed to decode value response"
       else
         throwError "Failed to parse value response as JSON"
-    return -result.get!.score
+    return result.get!.score
