@@ -52,3 +52,8 @@ register_option reap.max_steps : Nat :=
   { defValue := 64
     descr := "Max number of steps in MCTS tree search"
   }
+
+register_option reap.heartbeats : Nat := {
+  defValue := 1000000000
+  descr := "Maximum heartbeats per tactic"
+}

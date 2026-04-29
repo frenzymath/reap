@@ -11,11 +11,6 @@ public meta section
 
 namespace Reap.TreeSearch
 
-register_option reap.heartbeats : Nat := {
-  defValue := 1000000000
-  descr := "Maximum heartbeats per tactic"
-}
-
 def withHeartbeats {m : Type _ → Type _} {α : Type _} [Monad m] [MonadWithReaderOf Core.Context m] (heartbeats : Nat) : m α → m α :=
   withReader (fun s => { s with maxHeartbeats := heartbeats })
 
