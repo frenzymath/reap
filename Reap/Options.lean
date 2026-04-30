@@ -57,3 +57,19 @@ register_option reap.heartbeats : Nat := {
   defValue := 1000000000
   descr := "Maximum heartbeats per tactic"
 }
+
+register_option reap.c_base : Nat :=
+  { defValue := 100
+    descr := "MCTS exploration hyper-parameter c_base, scaled by 100." }
+
+register_option reap.c_init : Nat :=
+  { defValue := 0
+    descr := "MCTS exploration hyper-parameter c_init, scaled by 100." }
+
+register_option reap.visit_discount : Nat :=
+  { defValue := 100
+    descr := "MCTS score discount multiplier, scaled by 100." }
+
+register_option reap.prior_temperature : Nat :=
+  { defValue := 100
+    descr := "MCTS prior temperature exponent, scaled by 100." }

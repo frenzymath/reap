@@ -1,5 +1,6 @@
 module
 public meta import Lean
+public meta import Reap.Options
 public meta import Reap.PremiseSelection.API
 public meta import Reap.Tactic.WallClock
 public meta import TreeSearch.BestFirst
@@ -183,26 +184,29 @@ def expand (tg : TacGen) (se : StateEval) (node : NodeType) : TacticM (Array (Ed
   else
     return #[]
 
-def c_base := 1.0
-def c_init := 0.0
-def visit_discount := 1.0
-def prior_temperature := 1.0
+def scaledNatToFloat (n : Nat) : Float :=
+  n.toFloat / 100.0
 
-def computeScores (node : NodeType) : Array Float :=
+def computeScores (node : NodeType) : TacticM (Array Float) := do
+  let opts ← getOptions
+  let cBase := scaledNatToFloat (reap.c_base.get opts)
+  let cInit := scaledNatToFloat (reap.c_init.get opts)
+  let visitDiscount := scaledNatToFloat (reap.visit_discount.get opts)
+  let priorTemperature := scaledNatToFloat (reap.prior_temperature.get opts)
   let N := node.children.map (fun (e, _) => e.visit) |>.sum
   -- exploration factor
-  let c := c_init + Float.log ((N.toFloat + c_base + 1) / c_base)
-  node.children.map fun (e, n) =>
+  let c := cInit + Float.log ((N.toFloat + cBase + 1) / cBase)
+  return node.children.map fun (e, n) =>
     if let .ok _ score := n then
-      Float.exp (-visit_discount * (score + 1)) +
-        c * Float.pow e.prior prior_temperature * N.toFloat.sqrt / (e.visit.toFloat + 1)
+      Float.exp (-visitDiscount * (score + 1)) +
+        c * Float.pow e.prior priorTemperature * N.toFloat.sqrt / (e.visit.toFloat + 1)
     else
       -Float.inf
 
-def selectChild (node : NodeType) : Option Nat :=
-  let scores := computeScores node
+def selectChild (node : NodeType) : TacticM (Option Nat) := do
+  let scores ← computeScores node
   -- I could not find a convenient way in Std to compute argmax of an array
-  Id.run do
+  return Id.run do
     let mut bestIdx := none
     let mut bestScore := -Float.inf
     for (score, i) in scores.zipIdx do
@@ -243,7 +247,7 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     let (k, nodes) ← monteCarloTreeSearch
       (fun x => x.isTerminal)
       (expand tg se)
-      (fun x => return selectChild x)
+      (fun x => selectChild x)
       (fun _ e _ => return updateEdge e)
       (fun x => return updateNode x)
       (NodeData.ok (← Tactic.saveState) 0.0)
