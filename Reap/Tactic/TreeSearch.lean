@@ -69,42 +69,32 @@ def isSolved (ss : Tactic.SavedState) : TacticM Bool := do
 abbrev TacGen := List MVarId → MetaM (Array (String × Array PremiseSelectionResult × Float))
 abbrev StateEval := List MVarId → MetaM Float
 
-structure NodeState where
+namespace MCTS
+structure NodeData where
   state : Tactic.SavedState
-  value : Float
-  numVisit : Nat
-
-abbrev NodeData := Except String NodeState
+  valueSum : Float
+  numVisit : Nat := 0
 
 namespace NodeData
-def priority : NodeData → TacticM Float
-  | .error _ => return Float.inf
-  | .ok node => do
-      if ← isSolved node.state then
-        return Float.inf
-      else
-        return node.value
+def value (node : NodeData) : Float :=
+  node.valueSum / node.numVisit.toFloat
 
-def isTerminal : NodeData → TacticM Bool
-  | .error _ => pure false
-  | .ok node => TreeSearch.isSolved node.state
+def isTerminal (node : NodeData) : TacticM Bool :=
+  TreeSearch.isSolved node.state
 
-def restore : NodeData → TacticM Unit
-  | .error _ => pure ()
-  | .ok node => node.state.restore
+def restore (node : NodeData) : TacticM Unit :=
+  node.state.restore
 
 end NodeData
 
-def ppNodeData : NodeData → TacticM Json
-  | .error message => pure <| json%{ message: $message }
-  | .ok node => do
-    node.state.restore
-    let pp ← (← getUnsolvedGoals).mapM fun g => do return toString (← Meta.ppGoal g)
-    return json%{
-      state: $(pp),
-      value: $(node.value),
-      numVisit: $(node.numVisit)
-    }
+def ppNodeData (node : NodeData) : TacticM Json := do
+  node.state.restore
+  let pp ← (← getUnsolvedGoals).mapM fun g => do return toString (← Meta.ppGoal g)
+  return json%{
+    state: $(pp),
+    valueSum: $(node.valueSum),
+    numVisit: $(node.numVisit)
+  }
 
 def ppNode {ε} [ToJson ε] (node : Node NodeData ε) : TacticM Json := do
   return json%{
@@ -112,103 +102,56 @@ def ppNode {ε} [ToJson ε] (node : Node NodeData ε) : TacticM Json := do
     children: $(node.children)
   }
 
-namespace BFS
-def expand (tg : TacGen) (se : Option StateEval) : NodeData → TacticM (Array (String × NodeData))
-  | .error _ => pure #[]
-  | .ok node => do
-    node.state.restore
-    let tactics ← tg (← getUnsolvedGoals)
-    tactics.mapM fun (t, _, Δp) => do
-      node.state.restore
-      if let some s' ← evalTacticStr t (reap.heartbeats.get (← getOptions)) then
-        -- TODO: merge nodes
-        s'.restore
-        let g ← getUnsolvedGoals
-        let p' ← if g.isEmpty then
-          pure Float.inf
-        else if let some se := se then
-          se g
-        else
-          pure (node.value + Δp)
-        return (t, .ok ⟨ s', p', node.numVisit ⟩)
-      else
-        return (t, .error "")
-
-/--
-TODO: For now, `proofSearchBFS` is exposed to the root namespace
-so that we don't need to make any changes in the reap repository.
-In the future, we may want to move it to a more appropriate namespace.
--/
-def proofSearchBFS (tg : TacGen) (se : Option StateEval)
-    (maxNodes := BestFirst.defaultMaxNodes) : TacticM Unit := do
-  withCumulativeWallClockTime "reap.wall.bfs.total" do
-    let (k, nodes) ← bestFirstSearch NodeData.priority NodeData.isTerminal
-      (expand tg se) (.ok ⟨ (← Tactic.saveState), 0.0, 0 ⟩) maxNodes
-    let ppNodes ← nodes.mapM ppNode
-    let info := json%{
-      solution : $k,
-      nodes : $ppNodes
-    }
-    communicate info
-
-    if let some k := k then
-      let some {data := .ok node, ..} := nodes[k]? | unreachable!
-      node.state.restore
-  printCumulativeWallClockTimes
-
-end BFS
-
-namespace MCTS
-
 structure EdgeData where
   tacticStr : String
   premise : Array PremiseSelectionResult
-  prior : Float
-  visit : Nat := 0
+  probability : Float
+  value : Float
+  numVisit : Nat := 0
 deriving ToJson
+
+def expand (tg : TacGen) (se : Option StateEval) (node : NodeData) : TacticM (Array (EdgeData × NodeData)) := do
+  node.state.restore
+  let tactics ← tg (← getUnsolvedGoals)
+  let mut ret := #[]
+  for (t, ps, prior) in tactics do
+    node.state.restore
+    if let some s' ← evalTacticStr t (reap.heartbeats.get (← getOptions)) then
+      -- TODO: merge nodes
+      s'.restore
+      let g ← getUnsolvedGoals
+      let p' ← if g.isEmpty then
+        pure Float.inf
+      else if let some se := se then
+        se g
+      else
+        pure (node.valueSum + prior)
+      ret := ret.push (⟨ t, ps, prior.exp, 0, 0 ⟩, ⟨ s', p', node.numVisit ⟩)
+  return ret
+
 
 abbrev NodeType := Node NodeData (EdgeData × NodeData)
 
-def expand (tg : TacGen) (se : StateEval) (node : NodeType) : TacticM (Array (EdgeData × NodeData)) := do
-  if let .ok nodeState := node.data then
-    let mut ret := #[]
-    nodeState.state.restore
-    let tactics ← tg (← getUnsolvedGoals)
-    for (t, ps, p) in tactics do
-      nodeState.state.restore
-      if let some s' ← evalTacticStr t (reap.heartbeats.get (← getOptions)) then
-        s'.restore
-        -- TODO: figure out initialization of nodes
-        let score ← se (← getUnsolvedGoals)
-        ret := ret.push (⟨ t, ps, p, 1 ⟩, .ok ⟨ s', score, 1 ⟩)
-      else
-        ret := ret.push (⟨ t, #[], 0, 0 ⟩, .error "")
-
-    return ret
-  else
-    return #[]
-
 def scaledNatToFloat (n : Nat) : Float :=
-  n.toFloat / 100.0
+  n.toFloat / 1000.0
 
-def computeScores (node : NodeType) : TacticM (Array Float) := do
+def computePUCTScores (node : NodeType) : TacticM (Array Float) := do
   let opts ← getOptions
-  let cBase := scaledNatToFloat (reap.c_base.get opts)
+  let cBase := reap.c_base.get opts |>.toFloat
   let cInit := scaledNatToFloat (reap.c_init.get opts)
   let visitDiscount := scaledNatToFloat (reap.visit_discount.get opts)
-  let priorTemperature := scaledNatToFloat (reap.prior_temperature.get opts)
-  let N := node.children.map (fun (e, _) => e.visit) |>.sum
+  let priorTemperature := reap.prior_temperature.get opts |>.toFloat
+
   -- exploration factor
-  let c := cInit + Float.log ((N.toFloat + cBase + 1) / cBase)
+  let N := node.data.numVisit.toFloat
+  let c := cInit + Float.log ((N + cBase + 1) / cBase)
   return node.children.map fun (e, n) =>
-    if let .ok nodeState := n then
-      Float.exp (-visitDiscount * (nodeState.value + 1)) +
-        c * Float.pow e.prior priorTemperature * N.toFloat.sqrt / (e.visit.toFloat + 1)
-    else
-      -Float.inf
+    let Q := Float.pow visitDiscount (n.value - 1)
+    let U := c * Float.pow e.probability (1 / priorTemperature) * N.sqrt / (e.numVisit.toFloat + 1)
+    Q + U
 
 def selectChild (node : NodeType) : TacticM (Option Nat) := do
-  let scores ← computeScores node
+  let scores ← computePUCTScores node
   -- I could not find a convenient way in Std to compute argmax of an array
   return Id.run do
     let mut bestIdx := none
@@ -219,42 +162,39 @@ def selectChild (node : NodeType) : TacticM (Option Nat) := do
         bestScore := score
     return bestIdx
 
-def updateEdge (e : EdgeData) : EdgeData :=
+def updateEdge (e : EdgeData) (leaf : NodeData) : EdgeData :=
   {
     e with
-      visit := e.visit + 1
+      numVisit := e.numVisit + 1
+      value := e.value + leaf.valueSum
   }
 
-def updateNode (node : NodeType) : NodeData :=
-  if let .ok nodeState := node.data then
-    .ok { nodeState with value := nodeState.value + 1, numVisit := nodeState.numVisit + 1 }
-  else
-    node.data
+def updateNode (node : NodeType) (leaf : NodeData) : NodeData :=
+  {
+    node.data with
+      numVisit := node.data.numVisit + 1
+      valueSum := node.data.valueSum + leaf.valueSum
+  }
 
 structure PPNodeData where
   pp : List String
   value : Float
 deriving ToJson
 
-def ppNodeData (node : NodeData) : TacticM PPNodeData := do
-  node.restore
-  let pp ← (← getUnsolvedGoals).mapM fun g => return toString (← Meta.ppGoal g)
-  return ⟨ pp, ← node.priority ⟩
-
 end MCTS
 
 open MCTS in
 def reapMCTS (tg : TacGen) (se : StateEval)
     (maxNodes := MCTS.defaultMaxNodes)
-    (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := do
+    (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := unsafe do
   withCumulativeWallClockTime "reap.wall.mcts.total" do
-    let (k, nodes) ← monteCarloTreeSearch
+    let (k, nodes) ← monteCarloTreeSearch (ε := EdgeData)
       (fun x => x.isTerminal)
-      (expand tg se)
+      (fun x => expand tg se x.data)
       (fun x => selectChild x)
-      (fun _ e _ => return updateEdge e)
-      (fun x => return updateNode x)
-      (.ok ⟨ (← Tactic.saveState), 0.0, 0 ⟩)
+      (fun _ e _ l => return updateEdge e l)
+      (fun x l => return updateNode x l)
+      ⟨ (← Tactic.saveState), 0.0, 0 ⟩
       maxNodes maxSteps
 
     let ppNodes ← nodes.mapM ppNode
@@ -265,7 +205,7 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     communicate info
 
     if let some k := k then
-      let some {data := .ok node, ..} := nodes[k]? | unreachable!
+      let some {data := node, ..} := nodes[k]? | unreachable!
       node.state.restore
 
   printCumulativeWallClockTimes
