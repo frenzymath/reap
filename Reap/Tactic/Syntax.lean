@@ -211,13 +211,6 @@ elab "reap" : tactic => do
     let gs ← getUnsolvedGoals
     reaperTac gs
 
-elab "reapBFS" : tactic => do
-  let opts ← Lean.getOptions
-  let maxGoals := reap.max_goals.get opts
-  let useValueModel := reap.use_value_model.get opts
-  let se := if useValueModel then some TacticGenerator.generateValue else none
-  Reap.TreeSearch.BFS.proofSearchBFS TacticGenerator.generateTacticsWithPremises se maxGoals
-
 elab "reapMCTS" : tactic => do
   let opts ← Lean.getOptions
   let maxGoals := reap.max_goals.get opts

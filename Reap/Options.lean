@@ -59,17 +59,17 @@ register_option reap.heartbeats : Nat := {
 }
 
 register_option reap.c_base : Nat :=
-  { defValue := 100
-    descr := "MCTS exploration hyper-parameter c_base, scaled by 100." }
+  { defValue := 3200
+    descr := "MCTS exploration hyper-parameter c_base." }
 
 register_option reap.c_init : Nat :=
-  { defValue := 0
-    descr := "MCTS exploration hyper-parameter c_init, scaled by 100." }
+  { defValue := 1
+    descr := "MCTS exploration hyper-parameter c_init, scaled by 1000." }
 
 register_option reap.visit_discount : Nat :=
-  { defValue := 100
-    descr := "MCTS score discount multiplier, scaled by 100." }
+  { defValue := 990
+    descr := "MCTS value discount multiplier, scaled by 1000. γ in the AlphaProof paper." }
 
 register_option reap.prior_temperature : Nat :=
-  { defValue := 100
-    descr := "MCTS prior temperature exponent, scaled by 100." }
+  { defValue := 200
+    descr := "MCTS prior temperature exponent. τ in the AlphaProof paper." }
