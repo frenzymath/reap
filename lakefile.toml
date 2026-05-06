@@ -12,8 +12,8 @@ rev = "main"
 
 [[require]]
 name = "TreeSearch"
-git = "git@github.com:frenzymath/TreeSearch.git"
-rev = "main"
+git = "https://github.com/frenzymath/TreeSearch.git"
+rev = "fix-mcts"
 
 [[lean_lib]]
 name = "Reap"
