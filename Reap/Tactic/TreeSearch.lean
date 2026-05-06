@@ -2,6 +2,7 @@ module
 public meta import Lean
 public meta import Reap.Options
 public meta import Reap.PremiseSelection.API
+public meta import Reap.Tactic.Step
 public meta import Reap.Tactic.WallClock
 public meta import TreeSearch.BestFirst
 public meta import TreeSearch.MCTS
@@ -11,41 +12,6 @@ open Reap.WallClock
 public meta section
 
 namespace Reap.TreeSearch
-
-def withHeartbeats {m : Type _ → Type _} {α : Type _} [Monad m] [MonadWithReaderOf Core.Context m] (heartbeats : Nat) : m α → m α :=
-  withReader (fun s => { s with maxHeartbeats := heartbeats })
-
-def hasAuxDeclFVar (e : Expr) : TacticM Bool := do
-  let lctx ← getLCtx
-  return (e.find? fun
-    | .fvar fvarId => lctx.find? fvarId |>.any (·.isAuxDecl)
-    | _ => false
-  ).isSome
-
-def evalTacticStr (originalGoals : List MVarId) (str : String) (heartbeats : Nat) : TacticM (Option Tactic.SavedState) := do
-  withCumulativeWallClockTime "reap.wall.tactic_eval" do
-    let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return none
-    try
-      let success ← tryCatchRuntimeEx (handler := fun _ => return false) do
-        withHeartbeats heartbeats do
-          evalTactic stx
-          Term.synthesizeSyntheticMVarsNoPostponing
-        return true
-      if success then
-        pruneSolvedGoals
-        if (← getThe Core.State).messages.hasErrors then
-          return none
-        for g in originalGoals do
-          if ← g.isAssigned then
-            let e ← instantiateMVars (mkMVar g)
-            if e.hasSorry || e.hasExprMVar then
-              return none
-            if (← getGoals).isEmpty && (← hasAuxDeclFVar e) then
-              return none
-      else
-        return none
-    catch _ => return none
-    return ← Tactic.saveState
 
 def communicate (obj : Json) : IO Unit :=
   -- HACK: communicate the search tree to parent process in an unnecessarily complicated way
