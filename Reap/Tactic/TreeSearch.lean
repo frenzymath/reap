@@ -15,17 +15,33 @@ namespace Reap.TreeSearch
 def withHeartbeats {m : Type _ → Type _} {α : Type _} [Monad m] [MonadWithReaderOf Core.Context m] (heartbeats : Nat) : m α → m α :=
   withReader (fun s => { s with maxHeartbeats := heartbeats })
 
-def evalTacticStr (str : String) (heartbeats : Nat) : TacticM (Option Tactic.SavedState) := do
+def hasAuxDeclFVar (e : Expr) : TacticM Bool := do
+  let lctx ← getLCtx
+  return (e.find? fun
+    | .fvar fvarId => lctx.find? fvarId |>.any (·.isAuxDecl)
+    | _ => false
+  ).isSome
+
+def evalTacticStr (originalGoals : List MVarId) (str : String) (heartbeats : Nat) : TacticM (Option Tactic.SavedState) := do
   withCumulativeWallClockTime "reap.wall.tactic_eval" do
     let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return none
     try
       let success ← tryCatchRuntimeEx (handler := fun _ => return false) do
-        withHeartbeats heartbeats <| evalTactic stx
+        withHeartbeats heartbeats do
+          evalTactic stx
+          Term.synthesizeSyntheticMVarsNoPostponing
         return true
       if success then
         pruneSolvedGoals
         if (← getThe Core.State).messages.hasErrors then
           return none
+        for g in originalGoals do
+          if ← g.isAssigned then
+            let e ← instantiateMVars (mkMVar g)
+            if e.hasSorry || e.hasExprMVar then
+              return none
+            if (← getGoals).isEmpty && (← hasAuxDeclFVar e) then
+              return none
       else
         return none
     catch _ => return none
@@ -95,7 +111,7 @@ structure EdgeData where
   numVisit : Nat := 0
 deriving ToJson
 
-def visitNode (tg : TacGen) (se : StateEval) (node : NodeData) : TacticM (NodeData × Array (EdgeData × NodeData)) := do
+def visitNode (originalGoals : List MVarId) (tg : TacGen) (se : StateEval) (node : NodeData) : TacticM (NodeData × Array (EdgeData × NodeData)) := do
   node.state.restore
   let g ← getUnsolvedGoals
   let p' ← if g.isEmpty then
@@ -108,7 +124,7 @@ def visitNode (tg : TacGen) (se : StateEval) (node : NodeData) : TacticM (NodeDa
   let mut children := #[]
   for (t, ps, prior) in tactics do
     node.state.restore
-    if let some s' ← evalTacticStr t (reap.heartbeats.get (← getOptions)) then
+    if let some s' ← evalTacticStr originalGoals t (reap.heartbeats.get (← getOptions)) then
       -- TODO: merge nodes
       s'.restore
       children := children.push (⟨ t, ps, prior.exp, 0, 0 ⟩, ⟨ s', 0.0, 0 ⟩)
@@ -205,9 +221,10 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     (maxNodes := MCTS.defaultMaxNodes)
     (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := unsafe do
   withCumulativeWallClockTime "reap.wall.mcts.total" do
+    let originalGoals ← getUnsolvedGoals
     let (k, nodes) ← monteCarloTreeSearch (ε := EdgeData)
       (fun x => x.isTerminal)
-      (fun x => visitNode tg se x.data)
+      (fun x => visitNode originalGoals tg se x.data)
       (fun x => selectChild x)
       (fun _ e _ l => return updateEdge e l)
       (fun x l => return updateNode x l)
