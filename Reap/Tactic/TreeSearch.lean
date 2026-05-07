@@ -206,6 +206,8 @@ structure CheckedChild where
   state : Tactic.SavedState
   score : Float
 
+private def unevaluatedScore : Float := 0.0 - Float.inf
+
 /-- Re-normalize policy mass after Lean has rejected invalid tactics.
 The tactic generator already softmaxes model log-probabilities over sampled
 candidates; after filtering to executable tactics, conditioning on validity is
@@ -223,37 +225,48 @@ private def normalizeCheckedPriors (children : Array CheckedChild) : Array Float
     else
       weights.map fun weight => weight / total
 
-def expand (tg : TacGen) (se : StateEval) (node : NodeType) : TacticM (Array (EdgeData × NodeData)) := do
+/-- Visit a leaf state once: evaluate the leaf itself, ask the policy/tactic
+generator for outgoing actions, and execute those actions to create children.
+Child states are deliberately left unevaluated until they become leaves. -/
+def visitLeaf (tg : TacGen) (se : StateEval) (node : NodeType) :
+    TacticM (Array (EdgeData × NodeData) × NodeData × Float) := do
   if let .ok data := node.data then
     let mut checked := #[]
     let s₀ := data.state
     s₀.restore
-    let tactics ← tg (← getUnsolvedGoals)
+    let goals ← getUnsolvedGoals
+    let score ← if goals.isEmpty then pure 0.0 else se goals
+    let data' := .ok { data with
+      score := score,
+      visitCount := data.visitCount + 1
+    }
+    let tactics ← if goals.isEmpty then pure #[] else tg goals
     for (t, ps, p) in tactics do
       s₀.restore
       if let some s' ← evalTacticStr t (reap.heartbeats.get (← getOptions)) then
         s'.restore
-        let goals ← getUnsolvedGoals
-        let score ← if goals.isEmpty then pure 0.0 else se goals
+        let childGoals ← getUnsolvedGoals
+        let childScore := if childGoals.isEmpty then 0.0 else unevaluatedScore
         checked := checked.push {
           tacticStr := t
           premise := ps
           prior := p
           state := s'
-          score := score
+          score := childScore
         }
 
     let priors := normalizeCheckedPriors checked
-    return checked.zipIdx.map fun childAndIdx =>
+    let children := checked.zipIdx.map fun childAndIdx =>
       let child := childAndIdx.1
       let i := childAndIdx.2
       -- No virtual visit: edge starts unvisited so the first PUCT selection
-      -- reflects the prior, not a phantom Q value. The child node still
-      -- carries `score` so we can back it up on the first real rollout.
+      -- reflects the prior, not a phantom Q value. The child node's value will
+      -- be evaluated when that child is first visited as a leaf.
       (⟨ child.tacticStr, child.premise, priors[i]!, 0.0, 0, false ⟩,
         .ok ⟨child.state, child.score, 0⟩)
+    return (children, data', score)
   else
-    return #[]
+    return (#[], node.data, 0.0 - Float.inf)
 
 def c_base := 19652.0
 def c_init := 2.5
@@ -329,10 +342,6 @@ private def updateEdgeWithValue (_parent : NodeData) (e : EdgeData) (edgeValue :
   { e with
     totalValue := e.totalValue + edgeValue
     visitCount := e.visitCount + 1 }
-
-private def backupValueOfNodeData : NodeData → Float
-  | .ok data => data.score
-  | .error _ => 0.0 - Float.inf
 
 def updateEdge (parent : NodeData) (e : EdgeData) (childBackupValue : Float) : EdgeData × Float :=
   let edgeValue := childBackupValue - tacticStepCost
@@ -519,23 +528,53 @@ def updateNode (node : NodeType) : NodeData :=
       visitCount := visitCount
     }
 
+private abbrev SearchM (α : Type) :=
+  StateT (Array (Node NodeData (EdgeData × Nat))) TacticM α
+
+private partial def mctsStepWithLeafEval
+    (tg : TacGen) (se : StateEval) (i : Nat) : SearchM (Option Nat × Float) := do
+  let nodes ← get
+  let some x := nodes[i]? | unreachable!
+  let node ← _root_.TreeSearch.resolve x
+  match selectChild node with
+  | none =>
+      let (expandedChildren, data', leafValue) ← visitLeaf tg se node
+      let mut newChildren := #[]
+      let mut result := none
+      for (e, s') in expandedChildren do
+        let i' ← _root_.TreeSearch.pushT { data := s' }
+        newChildren := newChildren.push (e, i')
+        if ← NodeData.isTerminal s' then
+          result := some i'
+      modify fun a =>
+        a.set! i { x with data := data', children := x.children ++ newChildren }
+      if result.isSome then
+        return (result, leafValue)
+      else if ← NodeData.isTerminal data' then
+        return (some i, leafValue)
+      else
+        return (none, leafValue)
+  | some k =>
+      let some (e, j) := x.children[k]? | unreachable!
+      let (result, childBackupValue) ← mctsStepWithLeafEval tg se j
+      let (e', backupValue) := updateEdge x.data e childBackupValue
+      let x' := { x with children := x.children.set! k (e', j) }
+      let resolved ← _root_.TreeSearch.resolve x'
+      let data' := updateNode resolved
+      let x'' := { x' with data := data' }
+      _root_.TreeSearch.setAtT i x''
+      return (result, backupValue)
+
 private partial def monteCarloTreeSearchVerified
     (tg : TacGen) (se : StateEval)
-    (rootState : Tactic.SavedState) (rootGoals : List MVarId) (rootScore : Float)
+    (rootState : Tactic.SavedState) (rootGoals : List MVarId)
     (maxNodes := MCTS.defaultMaxNodes)
     (maxSteps := MCTS.defaultMaxSteps) :
     TacticM (Option (Nat × Tactic.SavedState) × Array (Node NodeData (EdgeData × Nat))) :=
-  StateT.run (s := #[ { data := NodeData.ok ⟨rootState, rootScore, 0⟩ } ]) do
+  StateT.run (s := #[ { data := NodeData.ok ⟨rootState, unevaluatedScore, 0⟩ } ]) do
     let mut step := 0
     while (← get).size < maxNodes && step < maxSteps do
-      let (result, _) ← _root_.TreeSearch.mctsStep
-        (fun x => x.isTerminal)
-        (expand tg se)
-        (fun x => return selectChild x)
-        (fun x => return backupValueOfNodeData x)
-        (fun p e v => return updateEdge p e v)
-        (fun x => return updateNode x)
-        0
+      let (result, _) ← mctsStepWithLeafEval tg se 0
       let mut candidate? := result
       let mut accepted : Option (Nat × Tactic.SavedState) := none
       let mut keepChecking := true
@@ -634,8 +673,7 @@ def reapMCTS (tg : TacGen) (se : StateEval)
   withCumulativeWallClockTime "reap.wall.mcts.total" do
     let rootState ← Tactic.saveState
     let rootGoals ← getUnsolvedGoals
-    let rootScore ← if rootGoals.isEmpty then pure 0.0 else se rootGoals
-    let (result, nodes) ← monteCarloTreeSearchVerified tg se rootState rootGoals rootScore maxNodes maxSteps
+    let (result, nodes) ← monteCarloTreeSearchVerified tg se rootState rootGoals maxNodes maxSteps
     let k := result.map Prod.fst
 
     let ppNodes ← nodes.mapM (MCTS.ppNode nodes)
