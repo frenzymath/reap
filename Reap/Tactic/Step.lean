@@ -114,14 +114,14 @@ def evalTacticStr (numSectionVars : Nat) (originalGoals : List MVarId) (str : St
   withCumulativeWallClockTime "reap.wall.tactic_eval" do
     let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return none
     try
-      let success ← tryCatchRuntimeEx (handler := fun _ => return false) do
+      let (success, messages) ← withCapturedMessages <| tryCatchRuntimeEx (handler := fun _ => return false) do
         withHeartbeats heartbeats do
           evalTactic stx
           Term.synthesizeSyntheticMVarsNoPostponing
         return true
       if success then
         pruneSolvedGoals
-        if (← getThe Core.State).messages.hasErrors then
+        if messages.any (·.severity == .error) then
           return none
         for g in originalGoals do
           if ← g.isAssigned then
