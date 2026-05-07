@@ -77,7 +77,7 @@ structure EdgeData where
   numVisit : Nat := 0
 deriving ToJson
 
-def visitNode (originalGoals : List MVarId) (tg : TacGen) (se : StateEval) (node : NodeData) : TacticM (NodeData × Array (EdgeData × NodeData)) := do
+def visitNode (numSectionVars : Nat) (originalGoals : List MVarId) (tg : TacGen) (se : StateEval) (node : NodeData) : TacticM (NodeData × Array (EdgeData × NodeData)) := do
   node.state.restore
   let g ← getUnsolvedGoals
   let p' ← if g.isEmpty then
@@ -90,7 +90,7 @@ def visitNode (originalGoals : List MVarId) (tg : TacGen) (se : StateEval) (node
   let mut children := #[]
   for (t, ps, prior) in tactics do
     node.state.restore
-    if let some s' ← evalTacticStr originalGoals t (reap.heartbeats.get (← getOptions)) then
+    if let some s' ← evalTacticStr numSectionVars originalGoals t (reap.heartbeats.get (← getOptions)) then
       -- TODO: merge nodes
       s'.restore
       children := children.push (⟨ t, ps, prior.exp, 0, 0 ⟩, ⟨ s', 0.0, 0 ⟩)
@@ -188,9 +188,10 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := unsafe do
   withCumulativeWallClockTime "reap.wall.mcts.total" do
     let originalGoals ← getUnsolvedGoals
+    let numSectionVars ← getNumSectionVars originalGoals
     let (k, nodes) ← monteCarloTreeSearch (ε := EdgeData)
       (fun x => x.isTerminal)
-      (fun x => visitNode originalGoals tg se x.data)
+      (fun x => visitNode numSectionVars originalGoals tg se x.data)
       (fun x => selectChild x)
       (fun _ e _ l => return updateEdge e l)
       (fun x l => return updateNode x l)
