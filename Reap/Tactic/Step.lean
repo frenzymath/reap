@@ -26,11 +26,11 @@ partial def collectAuxDeclNames (lctx : LocalContext) (e : Expr) (names : Array 
   | .mdata _ b | .proj _ _ b => collectAuxDeclNames lctx b names
   | _ => names
 
-def replaceAuxDeclFVars (lctx : LocalContext) (auxName : Name) (declName : Name) (levelParams : List Name) (e : Expr) : Expr :=
+def replaceAuxDeclFVars (lctx : LocalContext) (auxName : Name) (declName : Name) (levelParams : List Name) (sectionVars : Array Expr) (e : Expr) : Expr :=
   e.replace fun
     | .fvar fvarId =>
       match lctx.auxDeclToFullName.get? fvarId with
-      | some name => if name == auxName then some (mkConst declName (levelParams.map mkLevelParam)) else none
+      | some name => if name == auxName then some (mkAppN (mkConst declName (levelParams.map mkLevelParam)) sectionVars) else none
       | none => none
     | _ => none
 
@@ -43,13 +43,35 @@ def checkPreDefinitions (preDefs : Array PreDefinition) : TermElabM Bool := with
   catch _ =>
     return false
 
-def mkPreDefinition (goal : MVarId) : TacticM (Option PreDefinition) := do
+def getNonAuxFVars : MetaM (Array Expr) := do
+  let lctx ← getLCtx
+  return lctx.getFVars.filter fun x =>
+    !(lctx.find? x.fvarId! |>.any (·.isAuxDecl))
+
+def getNumSectionVars (goals : List MVarId) : TacticM Nat := do
+  let some goal := goals.head? | return 0
+  goal.withContext do
+    let sectionFVarIds := (← readThe Term.Context).sectionFVars.valuesArray.filterMap fun
+      | .fvar fvarId => some fvarId
+      | _ => none
+    let xs ← getNonAuxFVars
+    let mut numSectionVars := 0
+    for x in xs do
+      if sectionFVarIds.contains x.fvarId! then
+        numSectionVars := numSectionVars + 1
+      else
+        break
+    return numSectionVars
+
+def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option PreDefinition) := do
   goal.withContext do
     unless (← goal.isAssigned) do
       return none
     let lctx ← getLCtx
-    let xs := lctx.getFVars.filter fun x =>
-      !(lctx.find? x.fvarId! |>.any (·.isAuxDecl))
+    let xs ← getNonAuxFVars
+    if numSectionVars > xs.size then
+      return none
+    let sectionVars := xs.extract 0 numSectionVars
     let type ← instantiateMVars (← goal.getType)
     let value ← instantiateMVars (mkMVar goal)
     if type.hasExprMVar || value.hasExprMVar || value.hasSorry then
@@ -63,7 +85,7 @@ def mkPreDefinition (goal : MVarId) : TacticM (Option PreDefinition) := do
     let some value := (
       match auxNames with
       | #[] => some value
-      | #[auxName] => some <| replaceAuxDeclFVars lctx auxName declName levelParams value
+      | #[auxName] => some <| replaceAuxDeclFVars lctx auxName declName levelParams sectionVars value
       | _ => none
     ) | return none
     let type ← mkForallFVars xs type
@@ -77,17 +99,18 @@ def mkPreDefinition (goal : MVarId) : TacticM (Option PreDefinition) := do
       binders := .missing
       type
       value
+      numSectionVars
       termination := .none
     }
 
-def checkProof (originalGoals : List MVarId) : TacticM Bool := do
+def checkProof (numSectionVars : Nat) (originalGoals : List MVarId) : TacticM Bool := do
   let mut preDefs := #[]
   for goal in originalGoals do
-    let some preDef ← mkPreDefinition goal | return false
+    let some preDef ← mkPreDefinition numSectionVars goal | return false
     preDefs := preDefs.push preDef
   checkPreDefinitions preDefs
 
-def evalTacticStr (originalGoals : List MVarId) (str : String) (heartbeats : Nat) : TacticM (Option Tactic.SavedState) := do
+def evalTacticStr (numSectionVars : Nat) (originalGoals : List MVarId) (str : String) (heartbeats : Nat) : TacticM (Option Tactic.SavedState) := do
   withCumulativeWallClockTime "reap.wall.tactic_eval" do
     let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return none
     try
@@ -105,7 +128,7 @@ def evalTacticStr (originalGoals : List MVarId) (str : String) (heartbeats : Nat
             let e ← instantiateMVars (mkMVar g)
             if e.hasSorry || e.hasExprMVar then
               return none
-        if (← getGoals).isEmpty && !(← checkProof originalGoals) then
+        if (← getGoals).isEmpty && !(← checkProof numSectionVars originalGoals) then
           return none
       else
         return none
