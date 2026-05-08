@@ -104,6 +104,12 @@ def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option Pre
     }
 
 def checkProof (numSectionVars : Nat) (originalGoals : List MVarId) : TacticM Bool := do
+  for g in originalGoals do
+    if ← g.isAssigned then
+      let e ← instantiateMVars (mkMVar g)
+      if e.hasSorry || e.hasExprMVar then
+        return False
+
   let mut preDefs := #[]
   for goal in originalGoals do
     let some preDef ← mkPreDefinition numSectionVars goal | return false
@@ -114,25 +120,23 @@ def evalTacticStr (numSectionVars : Nat) (originalGoals : List MVarId) (str : St
   withCumulativeWallClockTime "reap.wall.tactic_eval" do
     let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return none
     try
-      let (success, messages) ← withCapturedMessages <| tryCatchRuntimeEx (handler := fun _ => return false) do
-        withHeartbeats heartbeats do
-          evalTactic stx
-          Term.synthesizeSyntheticMVarsNoPostponing
-        return true
+      let (success, messages) ← withCapturedMessages do
+        tryCatchRuntimeEx (handler := fun _ => return false) do
+          withHeartbeats heartbeats do
+            evalTactic stx
+            Term.synthesizeSyntheticMVarsNoPostponing
+          return true
       if success then
         pruneSolvedGoals
-        if messages.any (·.severity == .error) then
+        if hasErrorMessages messages then
           return none
-        for g in originalGoals do
-          if ← g.isAssigned then
-            let e ← instantiateMVars (mkMVar g)
-            if e.hasSorry || e.hasExprMVar then
-              return none
-        if (← getGoals).isEmpty && !(← checkProof numSectionVars originalGoals) then
-          return none
+        if (← getGoals).isEmpty then
+          if !(← checkProof numSectionVars originalGoals) then
+            return none
       else
         return none
-    catch _ => return none
+    catch _ =>
+      return none
     return ← Tactic.saveState
 
 end Reap.TreeSearch
