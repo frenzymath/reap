@@ -128,8 +128,8 @@ def ppNodeData : NodeData → TacticM Json
     let pp ← (← getUnsolvedGoals).mapM fun g => do return toString (← Meta.ppGoal g)
     return json%{
       state: $(pp),
-      score: $(data.score),
-      visitCount: $(data.visitCount)
+      valueSum: $(data.score),
+      numVisit: $(data.visitCount)
     }
 
 def ppNode {ε} [ToJson ε] (node : Node NodeData ε) : TacticM Json := do
@@ -594,15 +594,15 @@ private partial def monteCarloTreeSearchVerified
       step := step + 1
     return none
 
-structure PPNodeData where
-  pp : List String
-  value : Float
-  visitCount : Nat
-deriving ToJson
-
-structure PPEdgeData where
+structure PPRawEdgeData where
   tacticStr : String
   premise : Array PremiseSelectionResult
+  probability : Float
+  numVisit : Nat
+  value : Option Float
+deriving ToJson
+
+structure PPEdgeExtra where
   prior : Float
   totalValue : Float
   visitCount : Nat
@@ -632,11 +632,18 @@ private def computeEdgeBreakdown (parent : NodeData) (e : EdgeData) (child : Nod
     let u := c * e.prior * N.toFloat.sqrt / (1.0 + e.visitCount.toFloat)
     (true, some q, some u, some (q + u))
 
-private def ppEdgeData (parent : NodeData) (e : EdgeData) (child : NodeData) : PPEdgeData :=
-  let (live, q, u, qPlusU) := computeEdgeBreakdown parent e child
+private def ppRawEdgeData (e : EdgeData) : PPRawEdgeData :=
   {
     tacticStr := e.tacticStr
     premise := e.premise
+    probability := e.prior
+    numVisit := e.visitCount
+    value := if e.visitCount == 0 then none else some (e.totalValue / e.visitCount.toFloat)
+  }
+
+private def ppEdgeExtra (parent : NodeData) (e : EdgeData) (child : NodeData) : PPEdgeExtra :=
+  let (live, q, u, qPlusU) := computeEdgeBreakdown parent e child
+  {
     prior := e.prior
     totalValue := e.totalValue
     visitCount := e.visitCount
@@ -647,16 +654,15 @@ private def ppEdgeData (parent : NodeData) (e : EdgeData) (child : NodeData) : P
     qPlusU := qPlusU
   }
 
-def ppNodeData (node : NodeData) : TacticM PPNodeData := do
-  node.restore
-  let pp ← (← getUnsolvedGoals).mapM fun g => return toString (← Meta.ppGoal g)
-  return ⟨ pp, ← node.priority, NodeData.visitCount node ⟩
-
 def ppNode (nodes : Array (Node NodeData (EdgeData × Nat)))
     (node : Node NodeData (EdgeData × Nat)) : TacticM Json := do
   let children := node.children.map fun (e, childIdx) =>
     match nodes[childIdx]? with
-    | some child => (ppEdgeData node.data e child.data, childIdx)
+    | some child => Json.mkObj [
+        ("edge", toJson (ppRawEdgeData e)),
+        ("extra", toJson (ppEdgeExtra node.data e child.data)),
+        ("childIndex", toJson childIdx)
+      ]
     | none => unreachable!
   let data := ← Reap.TreeSearch.ppNodeData node.data
   return Json.mkObj [
