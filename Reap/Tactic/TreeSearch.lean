@@ -190,11 +190,11 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     let originalGoals ← getUnsolvedGoals
     let numSectionVars ← getNumSectionVars originalGoals
     let (k, nodes) ← monteCarloTreeSearch (ε := EdgeData)
-      (fun x => x.isTerminal)
-      (fun x => visitNode numSectionVars originalGoals tg se x.data)
-      (fun x => selectChild x)
-      (fun _ e _ l => return updateEdge e l)
-      (fun x l => return updateNode x l)
+      (fun x => StateT.lift <| x.isTerminal)
+      (fun x => StateT.lift <| visitNode numSectionVars originalGoals tg se x.data)
+      (fun x => StateT.lift <| selectChild x)
+      (fun _ e _ l => StateT.lift <| return updateEdge e l)
+      (fun x l => StateT.lift <| return updateNode x l)
       ⟨ (← Tactic.saveState), 0.0, 0 ⟩
       maxNodes maxSteps
 
