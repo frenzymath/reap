@@ -56,6 +56,7 @@ structure NodeData where
   state : Tactic.SavedState
   valueSum : Float
   numVisit : Nat := 0
+  numEvaluations : Nat := 0
 
 namespace NodeData
 def value (node : NodeData) : Float :=
@@ -77,28 +78,33 @@ structure EdgeData where
   numVisit : Nat := 0
 deriving ToJson
 
-def visitNode (numSectionVars : Nat) (originalGoals : List MVarId) (tg : TacGen) (se : StateEval) (node : NodeData) : TacticM (NodeData × Array (EdgeData × NodeData)) := do
-  node.state.restore
+abbrev NodeType := Node NodeData (EdgeData × NodeData)
+
+abbrev SearchM := IndexedTreeT NodeData EdgeData TacticM
+
+def visitNode (numSectionVars : Nat) (originalGoals : List MVarId) (tg : TacGen) (se : StateEval)
+    (nodeIdx : Nat) (node : NodeType) : SearchM Unit := do
+  node.data.state.restore
   let g ← getUnsolvedGoals
   let p' ← if g.isEmpty then
     pure Float.inf
   else
     se g
-  let node' := { node with valueSum := p' }
+  let data' := { node.data with valueSum := p', numEvaluations := node.data.numEvaluations + 1 }
+  modifyAtT nodeIdx fun node => { node with data := data' }
 
   let tactics ← tg g
-  let mut children := #[]
   for (t, ps, prior) in tactics do
-    node.state.restore
-    if let some s' ← evalTacticStr numSectionVars originalGoals t (reap.heartbeats.get (← getOptions)) then
-      -- TODO: merge nodes
-      s'.restore
-      children := children.push (⟨ t, ps, prior.exp, 0, 0 ⟩, ⟨ s', 0.0, 0 ⟩)
-
-  return (node', children)
-
-
-abbrev NodeType := Node NodeData (EdgeData × NodeData)
+    let probability := prior.exp
+    if let some childPos := node.children.findIdx? fun (e, _) => e.tacticStr == t then
+      let some (e, _) := node.children[childPos]? | unreachable!
+      let e' := { e with probability := e.probability + probability }
+      modifyAtT nodeIdx fun node => { node with children := node.children.modify childPos fun (_, c) => (e', c) }
+    else
+      node.data.state.restore
+      let opts ← getOptions
+      if let some s' ← evalTacticStr numSectionVars originalGoals t (reap.heartbeats.get opts) then
+        discard <| pushChildT nodeIdx ⟨ t, ps, probability, 0, 0 ⟩ { state := s', valueSum := 0.0 }
 
 def scaledNatToFloat (n : Nat) : Float :=
   n.toFloat / 1000.0
@@ -119,11 +125,19 @@ def computePUCTScores (node : NodeType) : TacticM (Array (Float × CQU)) := do
   -- exploration factor
   let N := node.data.numVisit.toFloat
   let c := cInit + Float.log ((N + cBase + 1) / cBase)
+  let totalMass := (node.children.map fun (e, _) => e.probability).sum
   return node.children.map fun (e, n) =>
-    let Q := Float.pow visitDiscount (n.value - 1)
-    let U := c * Float.pow e.probability (1 / priorTemperature) * N.sqrt / (e.numVisit.toFloat + 1)
+    let Q := visitDiscount.pow (n.value - 1)
+    let p := e.probability / totalMass
+    let U := c * p.pow (1 / priorTemperature) * N.sqrt / (e.numVisit.toFloat + 1)
     let score := Q + U
     (score, { c := c, Q := Q, U := U })
+
+def shouldProgressiveSample (node : NodeData) : TacticM Bool := do
+  let opts ← getOptions
+  let c := scaledNatToFloat (reap.progressive_sampling_c.get opts)
+  let alpha := scaledNatToFloat (reap.progressive_sampling_alpha.get opts)
+  return node.numEvaluations.toFloat <= c * Float.pow node.numVisit.toFloat alpha
 
 def ppNodeData (node : NodeData) : TacticM Json := do
   node.state.restore
@@ -131,7 +145,8 @@ def ppNodeData (node : NodeData) : TacticM Json := do
   return json%{
     state: $(pp),
     valueSum: $(node.valueSum),
-    numVisit: $(node.numVisit)
+    numVisit: $(node.numVisit),
+    numEvaluations: $(node.numEvaluations)
   }
 
 def ppNode (arr : Array (Node NodeData (EdgeData × Nat))) (node : Node NodeData (EdgeData × Nat)) : TacticM Json := do
@@ -155,6 +170,10 @@ def ppNode (arr : Array (Node NodeData (EdgeData × Nat))) (node : Node NodeData
   }
 
 def selectChild (node : NodeType) : TacticM (Option Nat) := do
+  if node.children.isEmpty then
+    return none
+  if ← shouldProgressiveSample node.data then
+    return none
   let scores ← computePUCTScores node
   -- I could not find a convenient way in Std to compute argmax of an array
   return Id.run do
@@ -190,12 +209,12 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     let originalGoals ← getUnsolvedGoals
     let numSectionVars ← getNumSectionVars originalGoals
     let (k, nodes) ← monteCarloTreeSearch (ε := EdgeData)
-      (fun x => StateT.lift <| x.isTerminal)
-      (fun x => StateT.lift <| visitNode numSectionVars originalGoals tg se x.data)
-      (fun x => StateT.lift <| selectChild x)
-      (fun _ e _ l => StateT.lift <| return updateEdge e l)
-      (fun x l => StateT.lift <| return updateNode x l)
-      ⟨ (← Tactic.saveState), 0.0, 0 ⟩
+      (fun x => do x.isTerminal)
+      (visitNode numSectionVars originalGoals tg se)
+      (fun x => do selectChild x)
+      (fun _ e _ l => return updateEdge e l)
+      (fun x l => return updateNode x l)
+      { state := (← Tactic.saveState), valueSum := 0.0 }
       maxNodes maxSteps
 
     let ppNodes ← nodes.mapM (ppNode nodes)
@@ -206,7 +225,7 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     communicate info
 
     if let some k := k then
-      let some {data := node, ..} := nodes[k]? | unreachable!
+      let some { data := node, .. } := nodes[k]? | unreachable!
       node.state.restore
 
   printCumulativeWallClockTimes

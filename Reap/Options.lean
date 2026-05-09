@@ -73,3 +73,11 @@ register_option reap.visit_discount : Nat :=
 register_option reap.prior_temperature : Nat :=
   { defValue := 200
     descr := "MCTS prior temperature exponent. τ in the AlphaProof paper." }
+
+register_option reap.progressive_sampling_c : Nat :=
+  { defValue := 10
+    descr := "MCTS progressive sampling c parameter, scaled by 1000." }
+
+register_option reap.progressive_sampling_alpha : Nat :=
+  { defValue := 600
+    descr := "MCTS progressive sampling alpha parameter, scaled by 1000." }
