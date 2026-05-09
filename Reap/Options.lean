@@ -5,11 +5,11 @@ public meta import Lean.Data.Options
 public meta section
 
 register_option reap.ps_endpoint : String :=
-  { defValue := "https://console.siflow.cn/siflow/auriga/skyinfer/ytwang/ps2-1/retrieve_premises"
+  { defValue := "https://console.siflow.cn/siflow/auriga/skyinfer/zcheng/ps2-1/retrieve_premises"
     descr := "Endpoint for the premise selection service." }
 
 register_option reap.value_endpoint : String :=
-  { defValue := "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/ytwang/reap-1-7-value/v1"
+  { defValue := "https://console.siflow.cn/siflow/auriga/skyinfer/zcheng/pvhead-1/value/v1"
     descr := "Endpoint for the value service." }
 
 register_option reap.use_value_model : Bool :=
@@ -17,7 +17,7 @@ register_option reap.use_value_model : Bool :=
     descr := "Whether to use the value model service." }
 
 register_option reap.policy_endpoint : String :=
-  { defValue := "https://siflow-auriga.siflow.cn/siflow/auriga/skyinfer/ytwang/reap-1-7b/v1"
+  { defValue := "https://console.siflow.cn/siflow/auriga/skyinfer/zcheng/pvhead-1/policy/v1"
     descr := "Endpoint for the LLM service." }
 
 register_option reap.llm_api_key : String :=
