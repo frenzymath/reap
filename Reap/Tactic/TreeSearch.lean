@@ -228,6 +228,6 @@ def reapMCTS (tg : TacGen) (se : StateEval)
       let some { data := node, .. } := nodes[k]? | unreachable!
       node.state.restore
 
-  printCumulativeWallClockTimes
+  logCumulativeWallClockTimes
 
 end Reap.TreeSearch
