@@ -17,3 +17,6 @@ rev = "main"
 
 [[lean_lib]]
 name = "Reap"
+
+[[lean_lib]]
+name = "Reap.Test"
