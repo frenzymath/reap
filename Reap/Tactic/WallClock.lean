@@ -20,29 +20,5 @@ def withCumulativeWallClockTime {α : Type _} (name : String) (act : m α) : m �
     stats.insert name <| (stats.getD name 0) + (stop - start)
   return result
 
-def getCumulativeWallClockTimes : m (Array (String × Nat)) := do
-  return (← liftM (m := BaseIO) cumulativeWallClockTimes.get).toArray
-
-def cumulativeWallClockTimesJson (stats : Array (String × Nat)) : Json :=
-  Json.mkObj <| stats.toList.map fun (name, nanos) => (name, toJson nanos)
-
-def logCumulativeWallClockTimes [MonadLog m] : m Unit := do
-  let stats ← getCumulativeWallClockTimes
-  -- Lean.logAt already knows how to attach positions, but it does not let
-  -- callers set Message.caption. The caption field only becomes reachable after
-  -- rebuilding the Message by hand, so every caller that wants a captioned log
-  -- gets to reimplement this small chunk of Lean core plumbing.
-  let ref ← MonadLog.getRef
-  let pos := ref.getPos?.getD 0
-  let endPos := ref.getTailPos?.getD pos
-  let fileMap ← getFileMap
-  logMessage {
-    fileName := ← getFileName
-    pos := fileMap.toPosition pos
-    endPos := fileMap.toPosition endPos
-    severity := .information
-    caption := "wallclock"
-    data := (cumulativeWallClockTimesJson stats).compress
-  }
-
-end Reap.WallClock
+def getCumulativeWallClockTimes : m (Std.HashMap String Nat) := do
+  return (← liftM (m := BaseIO) cumulativeWallClockTimes.get)
