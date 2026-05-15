@@ -218,16 +218,17 @@ def reapMCTS (tg : TacGen) (se : StateEval)
       maxNodes maxSteps
 
     let ppNodes ← nodes.mapM (ppNode nodes)
+    let wallClockTimes ← getCumulativeWallClockTimes
+    let stats := Json.mkObj <| wallClockTimes.toList.map fun (k, v) => (k, toJson v)
     let info := json%{
       solution : $k,
-      nodes : $ppNodes
+      nodes : $ppNodes,
+      stats : $stats
     }
     communicate info
 
     if let some k := k then
       let some { data := node, .. } := nodes[k]? | unreachable!
       node.state.restore
-
-  logCumulativeWallClockTimes
 
 end Reap.TreeSearch
