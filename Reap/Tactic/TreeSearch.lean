@@ -2,6 +2,7 @@ module
 public meta import Lean
 public meta import Reap.Options
 public meta import Reap.PremiseSelection.API
+public meta import Reap.Tactic.State
 public meta import Reap.Tactic.Step
 public meta import Reap.Tactic.WallClock
 public meta import TreeSearch.BestFirst
@@ -21,8 +22,7 @@ def communicate (obj : Json) : IO Unit :=
       h.putStrLn obj.compress
   catch _ => return ()
 
-def getGoalTypes (ss : Tactic.SavedState) : TacticM (Option (Array Expr)) := do
-  ss.restore
+def getGoalTypes : TacticM (Option (Array Expr)) := do
   let goals ← getUnsolvedGoals
   let mut goalTypes := #[]
   for g in goals do
@@ -44,8 +44,7 @@ def unifyTypes (t₁ t₂ : Array Expr) : TacticM Bool := do
       break
   return ret
 
-def isSolved (ss : Tactic.SavedState) : TacticM Bool := do
-  ss.restore
+def isSolved : TacticM Bool := do
   return (← getUnsolvedGoals).isEmpty
 
 abbrev TacGen := List MVarId → MetaM (Array (String × Array PremiseSelectionResult × Float))
@@ -54,19 +53,24 @@ abbrev StateEval := List MVarId → MetaM Float
 namespace MCTS
 structure NodeData where
   state : Tactic.SavedState
+  key : StateKey
   valueSum : Float
-  numVisit : Nat := 0
-  numEvaluations : Nat := 0
+  numVisit : Nat
+  numEvaluations : Nat
 
 namespace NodeData
+def fromState : TacticM NodeData := do
+  pure ⟨ ← Tactic.saveState, ← stateKey, 0.0, 0, 0 ⟩
+
 def value (node : NodeData) : Float :=
   if node.numVisit == 0 then 0.0 else node.valueSum / node.numVisit.toFloat
 
-def isTerminal (node : NodeData) : TacticM Bool :=
-  TreeSearch.isSolved node.state
-
 def restore (node : NodeData) : TacticM Unit :=
   node.state.restore
+
+def isTerminal (node : NodeData) : TacticM Bool := do
+  node.restore
+  TreeSearch.isSolved
 
 end NodeData
 
@@ -96,15 +100,14 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
   let tactics ← tg g
   for (t, ps, prior) in tactics do
     let probability := prior.exp
-    if let some childPos := node.children.findIdx? fun (e, _) => e.tacticStr == t then
-      let some (e, _) := node.children[childPos]? | unreachable!
+    if let some ((e, _), childPos) := node.children.zipIdx.find? fun ((e, _), _) => e.tacticStr == t then
       let e' := { e with probability := e.probability + probability }
       modifyAtT nodeIdx fun node => { node with children := node.children.modify childPos fun (_, c) => (e', c) }
     else
       node.data.state.restore
       let opts ← getOptions
-      if let some s' ← evalTacticStr ctx t (reap.heartbeats.get opts) then
-        discard <| pushChildT nodeIdx ⟨ t, ps, probability, 0, 0 ⟩ { state := s', valueSum := 0.0 }
+      if ← evalTacticStr ctx t (reap.heartbeats.get opts) then
+        discard <| pushChildT nodeIdx ⟨ t, ps, probability, 0, 0 ⟩ (← NodeData.fromState)
 
 def scaledNatToFloat (n : Nat) : Float :=
   n.toFloat / 1000.0
@@ -213,7 +216,7 @@ def reapMCTS (tg : TacGen) (se : StateEval)
       (fun x => do selectChild x)
       (fun _ e _ l => return updateEdge e l)
       (fun x l => return updateNode x l)
-      { state := (← Tactic.saveState), valueSum := 0.0 }
+      (← NodeData.fromState)
       maxNodes maxSteps
 
     let ppNodes ← nodes.mapM (ppNode nodes)

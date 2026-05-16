@@ -4,17 +4,15 @@ open Lean Meta Elab Tactic Reap.TreeSearch
 
 elab "guardEvalAccepts " s:str : tactic => do
   let ctx ← mkProofCheckContext
-  let some st ← evalTacticStr ctx s.getString 200000
-    | throwError "expected tactic to be accepted"
-  st.restore
+  unless ← evalTacticStr ctx s.getString 200000 do
+    throwError "expected tactic to be accepted"
 
 elab "guardEvalRejects " s:str : tactic => do
   withoutModifyingState do
     let ctx ← mkProofCheckContext
     let result ← evalTacticStr ctx s.getString 200000
-    match result with
-    | none => pure ()
-    | some _ => throwError "expected tactic to be rejected"
+    if result then
+      throwError "expected tactic to be rejected"
 
 theorem evalTacticStr_accepts_trivial : True := by
   guardEvalAccepts "trivial"
