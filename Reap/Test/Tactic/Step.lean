@@ -3,17 +3,15 @@ import Reap.Tactic.Step
 open Lean Meta Elab Tactic Reap.TreeSearch
 
 elab "guardEvalAccepts " s:str : tactic => do
-  let originalGoals ← getUnsolvedGoals
-  let numSectionVars ← getNumSectionVars originalGoals
-  let some st ← evalTacticStr numSectionVars originalGoals s.getString 200000
+  let ctx ← mkProofCheckContext
+  let some st ← evalTacticStr ctx s.getString 200000
     | throwError "expected tactic to be accepted"
   st.restore
 
 elab "guardEvalRejects " s:str : tactic => do
   withoutModifyingState do
-    let originalGoals ← getUnsolvedGoals
-    let numSectionVars ← getNumSectionVars originalGoals
-    let result ← evalTacticStr numSectionVars originalGoals s.getString 200000
+    let ctx ← mkProofCheckContext
+    let result ← evalTacticStr ctx s.getString 200000
     match result with
     | none => pure ()
     | some _ => throwError "expected tactic to be rejected"
