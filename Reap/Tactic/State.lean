@@ -35,9 +35,14 @@ def simplifyState : TacticM Unit := do
   let goals ← getGoals
   setGoals (← goals.mapM fun goal => liftM (dedupPropContext goal : MetaM MVarId))
 
-def simplifySavedState (state : Tactic.SavedState) : TacticM Tactic.SavedState := do
-  state.restore
-  simplifyState
-  Tactic.saveState
+abbrev StateKey := String
+
+example : Hashable StateKey := inferInstance
+
+def stateKey : TacticM StateKey := do
+  let goals ← getUnsolvedGoals
+  let pp ← goals.toArray.mapM fun goal => do
+    return toString (← Meta.ppGoal goal)
+  return toJson pp |>.compress
 
 end Reap.TreeSearch

@@ -98,15 +98,15 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
   modifyAtT nodeIdx fun node => { node with data := data' }
 
   let tactics ← tg g
+  let opts ← getOptions
   for (t, ps, prior) in tactics do
-    let probability := prior.exp
-    if let some ((e, _), childPos) := node.children.zipIdx.find? fun ((e, _), _) => e.tacticStr == t then
-      let e' := { e with probability := e.probability + probability }
-      modifyAtT nodeIdx fun node => { node with children := node.children.modify childPos fun (_, c) => (e', c) }
-    else
-      node.data.state.restore
-      let opts ← getOptions
-      if ← evalTacticStr ctx t (reap.heartbeats.get opts) then
+    if ← evalTacticStr ctx t (reap.heartbeats.get opts) then
+      let probability := prior.exp
+      let key ← stateKey
+      if let some ((e, _), childPos) := node.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == key then
+        let e' := { e with probability := e.probability + probability }
+        modifyAtT nodeIdx fun node => { node with children := node.children.modify childPos fun (_, c) => (e', c) }
+      else
         discard <| pushChildT nodeIdx ⟨ t, ps, probability, 0, 0 ⟩ (← NodeData.fromState)
 
 def scaledNatToFloat (n : Nat) : Float :=
