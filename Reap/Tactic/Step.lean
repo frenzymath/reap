@@ -127,9 +127,9 @@ def checkProof (ctx : ProofCheckContext) : TacticM Bool := do
     preDefs := preDefs.push preDef
   checkPreDefinitions preDefs
 
-def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (Option Tactic.SavedState) := do
+def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM Bool := do
   withCumulativeWallClockTime "reap.wall.tactic_eval" do
-    let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return none
+    let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return false
     try
       let (success, messages) ← withCapturedMessages do
         tryCatchRuntimeEx (handler := fun _ => return false) do
@@ -140,14 +140,14 @@ def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : 
       if success then
         pruneSolvedGoals
         if hasErrorMessages messages then
-          return none
+          return false
         if (← getGoals).isEmpty then
           if !(← checkProof ctx) then
-            return none
+            return false
       else
-        return none
+        return false
     catch _ =>
-      return none
-    return ← Tactic.saveState
+      return false
+    return true
 
 end Reap.TreeSearch
