@@ -82,7 +82,7 @@ abbrev NodeType := Node NodeData (EdgeData × NodeData)
 
 abbrev SearchM := IndexedTreeT NodeData EdgeData TacticM
 
-def visitNode (numSectionVars : Nat) (originalGoals : List MVarId) (tg : TacGen) (se : StateEval)
+def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
     (nodeIdx : Nat) (node : NodeType) : SearchM Unit := do
   node.data.state.restore
   let g ← getUnsolvedGoals
@@ -103,7 +103,7 @@ def visitNode (numSectionVars : Nat) (originalGoals : List MVarId) (tg : TacGen)
     else
       node.data.state.restore
       let opts ← getOptions
-      if let some s' ← evalTacticStr numSectionVars originalGoals t (reap.heartbeats.get opts) then
+      if let some s' ← evalTacticStr ctx t (reap.heartbeats.get opts) then
         discard <| pushChildT nodeIdx ⟨ t, ps, probability, 0, 0 ⟩ { state := s', valueSum := 0.0 }
 
 def scaledNatToFloat (n : Nat) : Float :=
@@ -206,11 +206,10 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     (maxNodes := MCTS.defaultMaxNodes)
     (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := unsafe do
   withCumulativeWallClockTime "reap.wall.mcts.total" do
-    let originalGoals ← getUnsolvedGoals
-    let numSectionVars ← getNumSectionVars originalGoals
+    let ctx ← mkProofCheckContext
     let (k, nodes) ← monteCarloTreeSearch (ε := EdgeData)
       (fun x => do x.isTerminal)
-      (visitNode numSectionVars originalGoals tg se)
+      (visitNode ctx tg se)
       (fun x => do selectChild x)
       (fun _ e _ l => return updateEdge e l)
       (fun x l => return updateNode x l)

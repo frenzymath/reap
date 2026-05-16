@@ -63,6 +63,17 @@ def getNumSectionVars (goals : List MVarId) : TacticM Nat := do
         break
     return numSectionVars
 
+structure ProofCheckContext where
+  numSectionFVars : Nat
+  originalGoals : List MVarId
+
+def mkProofCheckContext : TacticM ProofCheckContext := do
+  let originalGoals ← getUnsolvedGoals
+  return {
+    numSectionFVars := (← getNumSectionVars originalGoals)
+    originalGoals := originalGoals
+  }
+
 def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option PreDefinition) := do
   goal.withContext do
     unless (← goal.isAssigned) do
@@ -103,20 +114,20 @@ def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option Pre
       termination := .none
     }
 
-def checkProof (numSectionVars : Nat) (originalGoals : List MVarId) : TacticM Bool := do
-  for g in originalGoals do
+def checkProof (ctx : ProofCheckContext) : TacticM Bool := do
+  for g in ctx.originalGoals do
     if ← g.isAssigned then
       let e ← instantiateMVars (mkMVar g)
       if e.hasSorry || e.hasExprMVar then
         return False
 
   let mut preDefs := #[]
-  for goal in originalGoals do
-    let some preDef ← mkPreDefinition numSectionVars goal | return false
+  for goal in ctx.originalGoals do
+    let some preDef ← mkPreDefinition ctx.numSectionFVars goal | return false
     preDefs := preDefs.push preDef
   checkPreDefinitions preDefs
 
-def evalTacticStr (numSectionVars : Nat) (originalGoals : List MVarId) (str : String) (heartbeats : Nat) : TacticM (Option Tactic.SavedState) := do
+def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (Option Tactic.SavedState) := do
   withCumulativeWallClockTime "reap.wall.tactic_eval" do
     let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return none
     try
@@ -131,7 +142,7 @@ def evalTacticStr (numSectionVars : Nat) (originalGoals : List MVarId) (str : St
         if hasErrorMessages messages then
           return none
         if (← getGoals).isEmpty then
-          if !(← checkProof numSectionVars originalGoals) then
+          if !(← checkProof ctx) then
             return none
       else
         return none
