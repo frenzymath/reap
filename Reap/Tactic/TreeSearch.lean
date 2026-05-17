@@ -50,6 +50,30 @@ def isSolved : TacticM Bool := do
 abbrev TacGen := List MVarId → MetaM (Array (String × Array PremiseSelectionResult × Float))
 abbrev StateEval := List MVarId → MetaM Float
 
+structure SearchHyperparameters where
+  cBase : Float
+  cInit : Float
+  visitDiscount : Float
+  priorTemperature : Float
+  progressiveSamplingC : Float
+  progressiveSamplingAlpha : Float
+
+def scaledNatToFloat (n : Nat) : Float :=
+  n.toFloat / 1000.0
+
+namespace SearchHyperparameters
+
+def fromOptions (opts : Options) : SearchHyperparameters := {
+  cBase := reap.c_base.get opts |>.toFloat
+  cInit := scaledNatToFloat <| reap.c_init.get opts
+  visitDiscount := scaledNatToFloat <| reap.visit_discount.get opts
+  priorTemperature := reap.prior_temperature.get opts |>.toFloat
+  progressiveSamplingC := scaledNatToFloat <| reap.progressive_sampling_c.get opts
+  progressiveSamplingAlpha := scaledNatToFloat <| reap.progressive_sampling_alpha.get opts
+}
+
+end SearchHyperparameters
+
 namespace MCTS
 structure NodeData where
   state : Tactic.SavedState
@@ -109,38 +133,28 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
       else
         discard <| pushChildT nodeIdx ⟨ t, ps, probability, 0, 0 ⟩ (← NodeData.fromState)
 
-def scaledNatToFloat (n : Nat) : Float :=
-  n.toFloat / 1000.0
-
 structure CQU where
   c : Float
   Q : Float
   U : Float
 deriving Inhabited, ToJson
 
-def computePUCTScores (node : NodeType) : TacticM (Array (Float × CQU)) := do
-  let opts ← getOptions
-  let cBase := reap.c_base.get opts |>.toFloat
-  let cInit := scaledNatToFloat (reap.c_init.get opts)
-  let visitDiscount := scaledNatToFloat (reap.visit_discount.get opts)
-  let priorTemperature := reap.prior_temperature.get opts |>.toFloat
-
+def computePUCTScores (params : SearchHyperparameters)
+    (node : NodeType) : Array (Float × CQU) :=
   -- exploration factor
   let N := node.data.numVisit.toFloat
-  let c := cInit + Float.log ((N + cBase + 1) / cBase)
+  let c := params.cInit + Float.log ((N + params.cBase + 1) / params.cBase)
   let totalMass := (node.children.map fun (e, _) => e.probability).sum
-  return node.children.map fun (e, n) =>
-    let Q := visitDiscount.pow (n.value - 1)
+  node.children.map fun (e, n) =>
+    let Q := params.visitDiscount.pow (n.value - 1)
     let p := e.probability / totalMass
-    let U := c * p.pow (1 / priorTemperature) * N.sqrt / (e.numVisit.toFloat + 1)
+    let U := c * p.pow (1 / params.priorTemperature) * N.sqrt / (e.numVisit.toFloat + 1)
     let score := Q + U
     (score, { c := c, Q := Q, U := U })
 
-def shouldProgressiveSample (node : NodeData) : TacticM Bool := do
-  let opts ← getOptions
-  let c := scaledNatToFloat (reap.progressive_sampling_c.get opts)
-  let alpha := scaledNatToFloat (reap.progressive_sampling_alpha.get opts)
-  return node.numEvaluations.toFloat <= c * Float.pow node.numVisit.toFloat alpha
+def shouldProgressiveSample (params : SearchHyperparameters) (node : NodeData) : Bool :=
+  node.numEvaluations.toFloat <=
+    params.progressiveSamplingC * Float.pow node.numVisit.toFloat params.progressiveSamplingAlpha
 
 def ppNodeData (node : NodeData) : TacticM Json := do
   node.state.restore
@@ -152,11 +166,12 @@ def ppNodeData (node : NodeData) : TacticM Json := do
     numEvaluations: $(node.numEvaluations)
   }
 
-def ppNode (arr : Array (Node NodeData (EdgeData × Nat))) (node : Node NodeData (EdgeData × Nat)) : TacticM Json := do
+def ppNode (params : SearchHyperparameters) (arr : Array (Node NodeData (EdgeData × Nat)))
+    (node : Node NodeData (EdgeData × Nat)) : TacticM Json := do
   let children ← node.children.mapM fun (e, i) => do
     let some x := arr[i]? | unreachable!
     return (e, x.data)
-  let scores ← computePUCTScores { data := node.data, children := children }
+  let scores := computePUCTScores params { data := node.data, children := children }
   let ppChildren := node.children.zip scores |>.map fun ((e, i), (score, cqu)) => json%{
     edge: $e,
     extra: {
@@ -172,21 +187,20 @@ def ppNode (arr : Array (Node NodeData (EdgeData × Nat))) (node : Node NodeData
     children: $ppChildren
   }
 
-def selectChild (node : NodeType) : TacticM (Option Nat) := do
-  if node.children.isEmpty then
-    return none
-  if ← shouldProgressiveSample node.data then
-    return none
-  let scores ← computePUCTScores node
-  -- I could not find a convenient way in Std to compute argmax of an array
-  return Id.run do
-    let mut bestIdx := none
-    let mut bestScore := -Float.inf
-    for ((score, _), i) in scores.zipIdx do
-      if score > bestScore then
-        bestIdx := some i
-        bestScore := score
-    return bestIdx
+def selectChild (params : SearchHyperparameters) (node : NodeType) : Option Nat := do
+  if node.children.isEmpty || shouldProgressiveSample params node.data then
+    none
+  else
+    let scores := computePUCTScores params node
+    -- I could not find a convenient way in Std to compute argmax of an array
+    Id.run do
+      let mut bestIdx := none
+      let mut bestScore := -Float.inf
+      for ((score, _), i) in scores.zipIdx do
+        if score > bestScore then
+          bestIdx := some i
+          bestScore := score
+      return bestIdx
 
 def updateEdge (e : EdgeData) (leaf : NodeData) : EdgeData :=
   {
@@ -210,16 +224,17 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := unsafe do
   withCumulativeWallClockTime "reap.wall.mcts.total" do
     let ctx ← mkProofCheckContext
+    let params := SearchHyperparameters.fromOptions (← getOptions)
     let (k, nodes) ← monteCarloTreeSearch (ε := EdgeData)
       (fun x => do x.isTerminal)
       (visitNode ctx tg se)
-      (fun x => do selectChild x)
+      (fun x => return selectChild params x)
       (fun _ e _ l => return updateEdge e l)
       (fun x l => return updateNode x l)
       (← NodeData.fromState)
       maxNodes maxSteps
 
-    let ppNodes ← nodes.mapM (ppNode nodes)
+    let ppNodes ← nodes.mapM (ppNode params nodes)
     let wallClockTimes ← getCumulativeWallClockTimes
     let stats := Json.mkObj <| wallClockTimes.toList.map fun (k, v) => (k, toJson v)
     let info := json%{
