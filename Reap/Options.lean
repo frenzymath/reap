@@ -25,7 +25,7 @@ register_option reap.llm_api_key : String :=
     descr := "API key for the LLM service." }
 
 register_option reap.num_samples : Nat :=
-  { defValue := 10
+  { defValue := 6
     descr := "Number of samples to generate." }
 
 register_option reap.num_premises : Nat :=
@@ -71,11 +71,11 @@ register_option reap.visit_discount : Nat :=
     descr := "MCTS value discount multiplier, scaled by 1000. γ in the AlphaProof paper." }
 
 register_option reap.prior_temperature : Nat :=
-  { defValue := 200
+  { defValue := 50
     descr := "MCTS prior temperature exponent. τ in the AlphaProof paper." }
 
 register_option reap.progressive_sampling_c : Nat :=
-  { defValue := 100
+  { defValue := 10
     descr := "MCTS progressive sampling c parameter, scaled by 1000." }
 
 register_option reap.progressive_sampling_alpha : Nat :=
