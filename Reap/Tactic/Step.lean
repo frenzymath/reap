@@ -134,7 +134,7 @@ partial def containsQuestionTactic (stx : Syntax) : Bool :=
   isQuestionTacticKind stx.getKind || stx.getArgs.any containsQuestionTactic
 
 def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM Bool := do
-  withCumulativeWallClockTime "reap.wall.tactic_eval" do
+  withLogWallClockTime "tactic_eval" (fun success => json%{ tactic: $str, success: $success }) do
     let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return false
     if containsQuestionTactic stx then return false
     try

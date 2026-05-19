@@ -7,18 +7,27 @@ open Lean Elab Tactic
 
 namespace Reap.WallClock
 
-initialize cumulativeWallClockTimes : IO.Ref (Std.HashMap String Nat) ←
-  IO.mkRef {}
+initialize wallClockLogFile : IO.Ref (Option IO.FS.Handle) ← IO.mkRef none
 
-variable {m : Type _ → Type _} [Monad m] [MonadLiftT BaseIO m]
+variable {m : Type _ → Type _} [Monad m] [MonadLiftT IO m]
 
-def withCumulativeWallClockTime {α : Type _} (name : String) (act : m α) : m α := do
-  let start ← IO.monoNanosNow
+def appendLogRecord (record : Json) : m Unit := liftM (m := IO) do
+  if let some f ← wallClockLogFile.get then
+    f.putStrLn record.compress
+
+def openLogFile (path : System.FilePath) : m Unit := liftM (m := IO) do
+  let f ← IO.FS.Handle.mk path .append
+  wallClockLogFile.set f
+
+def withLogWallClockTime {α : Type _} (name : String) (extraFun : α → Json) (act : m α) : m α := do
+  let start ← IO.monoNanosNow.toIO
   let result ← act
-  let stop ← IO.monoNanosNow
-  discard <| liftM (m := BaseIO) <| cumulativeWallClockTimes.modify fun stats =>
-    stats.insert name <| (stats.getD name 0) + (stop - start)
+  let stop ← IO.monoNanosNow.toIO
+  let record := json%{
+    name: $name,
+    start: $start,
+    stop: $stop,
+    extra: $(extraFun result)
+  }
+  appendLogRecord record
   return result
-
-def getCumulativeWallClockTimes : m (Std.HashMap String Nat) := do
-  return (← liftM (m := BaseIO) cumulativeWallClockTimes.get)
