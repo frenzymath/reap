@@ -127,9 +127,16 @@ def checkProof (ctx : ProofCheckContext) : TacticM Bool := do
     preDefs := preDefs.push preDef
   checkPreDefinitions preDefs
 
+def isQuestionTacticKind (kind : SyntaxNodeKind) : Bool :=
+  kind == `sorry || kind == `admit || (if let .str _ x := kind then x.endsWith "?" else false)
+
+partial def containsQuestionTactic (stx : Syntax) : Bool :=
+  isQuestionTacticKind stx.getKind || stx.getArgs.any containsQuestionTactic
+
 def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM Bool := do
   withCumulativeWallClockTime "reap.wall.tactic_eval" do
     let .ok stx := Parser.runParserCategory (← getEnv) `tactic str | return false
+    if containsQuestionTactic stx then return false
     try
       let (success, messages) ← withCapturedMessages do
         tryCatchRuntimeEx (handler := fun _ => return false) do
