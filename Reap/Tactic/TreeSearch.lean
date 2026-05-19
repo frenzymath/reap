@@ -123,9 +123,11 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
 
   let tactics ← tg g
   let opts ← getOptions
+  let heartbeats := reap.heartbeats.get opts
+  let priorTemperature := reap.prior_temperature.get opts |>.toFloat
   for (t, ps, prior) in tactics do
-    if ← evalTacticStr ctx t (reap.heartbeats.get opts) then
-      let probability := prior.exp
+    if ← evalTacticStr ctx t heartbeats then
+      let probability := (prior / priorTemperature).exp
       let key ← stateKey
       if let some ((e, _), childPos) := node.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == key then
         let e' := { e with probability := e.probability + probability }
@@ -148,7 +150,7 @@ def computePUCTScores (params : SearchHyperparameters)
   node.children.map fun (e, n) =>
     let Q := params.visitDiscount.pow (n.value - 1)
     let p := e.probability / totalMass
-    let U := c * p.pow (1 / params.priorTemperature) * N.sqrt / (e.numVisit.toFloat + 1)
+    let U := c * p * N.sqrt / (e.numVisit.toFloat + 1)
     let score := Q + U
     (score, { c := c, Q := Q, U := U })
 
