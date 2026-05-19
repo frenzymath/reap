@@ -224,30 +224,28 @@ open MCTS in
 def reapMCTS (tg : TacGen) (se : StateEval)
     (maxNodes := MCTS.defaultMaxNodes)
     (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := unsafe do
-  withCumulativeWallClockTime "reap.wall.mcts.total" do
-    let ctx ← mkProofCheckContext
-    let params := SearchHyperparameters.fromOptions (← getOptions)
-    let (k, nodes) ← monteCarloTreeSearch (ε := EdgeData)
-      (fun x => do x.isTerminal)
-      (visitNode ctx tg se)
-      (fun x => return selectChild params x)
-      (fun _ e _ l => return updateEdge e l)
-      (fun x l => return updateNode x l)
-      (← NodeData.fromState)
-      maxNodes maxSteps
+  let opts ← getOptions
+  openLogFile (.mk <| reap.wall_clock_log_path.get opts)
+  let ctx ← mkProofCheckContext
+  let params := SearchHyperparameters.fromOptions opts
+  let (k, nodes) ← monteCarloTreeSearch (ε := EdgeData)
+    (fun x => do x.isTerminal)
+    (visitNode ctx tg se)
+    (fun x => return selectChild params x)
+    (fun _ e _ l => return updateEdge e l)
+    (fun x l => return updateNode x l)
+    (← NodeData.fromState)
+    maxNodes maxSteps
 
-    let ppNodes ← nodes.mapM (ppNode params nodes)
-    let wallClockTimes ← getCumulativeWallClockTimes
-    let stats := Json.mkObj <| wallClockTimes.toList.map fun (k, v) => (k, toJson v)
-    let info := json%{
-      solution : $k,
-      nodes : $ppNodes,
-      stats : $stats
-    }
-    communicate info
+  let ppNodes ← nodes.mapM (ppNode params nodes)
+  let info := json%{
+    solution : $k,
+    nodes : $ppNodes
+  }
+  communicate info
 
-    if let some k := k then
-      let some { data := node, .. } := nodes[k]? | unreachable!
-      node.state.restore
+  if let some k := k then
+    let some { data := node, .. } := nodes[k]? | unreachable!
+    node.state.restore
 
 end Reap.TreeSearch

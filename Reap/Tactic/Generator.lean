@@ -87,33 +87,36 @@ def getClient : CoreM TacticGenerator := do
     premiseSelectionClient := ⟨reap.ps_endpoint.get (← getOptions)⟩
   }
 
+deriving instance ToJson for OpenAIChatCompletionTokenLogprob, OpenAIChoiceLogprobs, OpenAIChatChoice, OpenAIChatResponse
+
 /-- Main function to generate tactics -/
 def generatePPTactics (ppGoal : String) : CoreM (Array PremiseSelectionResult × Array (String × Float)) := do
   let opts ← getOptions
-  withCumulativeWallClockTime "reap.wall.tactic_gen" do
-    let generator ← getClient
-    let relatedTheorems ← withCumulativeWallClockTime "reap.wall.premise_select" do
-      pure <|
-        (← retryCoreM?
-          (PremiseSelectionClient.getPremises ppGoal (reap.num_premises.get opts))).getD #[]
-    let prompt := mkPrompt ppGoal relatedTheorems
-    -- let mut results : Std.HashSet String := Std.HashSet.emptyWithCapacity
-    let mut results : List (String × Float) := []
-    let req : OpenAIChatRequest := {
-      model := reap.model.get opts,
-      messages := [ { role := "user", content := prompt } ],
-      n := reap.num_samples.get opts,
-      temperature := (reap.temperature.get opts).toFloat / 100.0,
-      max_tokens := reap.max_tokens.get opts,
-      logprobs := true
-    }
-    let some res ← retryCoreM? (generator.llmClient.generateChat req) | return (#[], #[])
+  let generator ← getClient
+  let relatedTheorems ← withLogWallClockTime "premise_select" (fun result => json%{ goal: $ppGoal, result: $result }) do
+    pure <|
+      (← retryCoreM?
+        (PremiseSelectionClient.getPremises ppGoal (reap.num_premises.get opts))).getD #[]
+  let prompt := mkPrompt ppGoal relatedTheorems
+  -- let mut results : Std.HashSet String := Std.HashSet.emptyWithCapacity
+  let mut results : List (String × Float) := []
+  let req : OpenAIChatRequest := {
+    model := reap.model.get opts,
+    messages := [ { role := "user", content := prompt } ],
+    n := reap.num_samples.get opts,
+    temperature := (reap.temperature.get opts).toFloat / 100.0,
+    max_tokens := reap.max_tokens.get opts,
+    logprobs := true
+  }
+  let res ← withLogWallClockTime "tactic_gen" (fun result => json%{ goal: $ppGoal, ps: $relatedTheorems, result: $result }) <|
+    retryCoreM? (generator.llmClient.generateChat req)
+  if let some res := res then
     for result in (parseChatResponseOpenAI res) do
       results := results.insert result
-      -- logInfo m!"Generated tactic: {result.1} with probability {result.2}"
     results := results.eraseDupsBy (fun x y => x.1 == y.1)
-    -- let finalResults := (results.toArray.filter filterGeneration).map fun x => (x, 1.0)
     return (relatedTheorems, results.toArray)
+  else
+    return (#[], #[])
 
 def Meta.ppProofState (mvarIds : List MVarId) : MetaM Format := do
   return Std.Format.joinSep (← mvarIds.mapM (Meta.ppGoal)) "\n".toFormat
@@ -130,23 +133,23 @@ def generateTacticsWithPremises (mvarIds : List MVarId) : MetaM <| Array (String
 
 structure ValueResult where
   score : Float
-deriving Inhabited, FromJson
+deriving Inhabited, FromJson, ToJson
 
 def generateValue (mvarIds : List MVarId) : MetaM Float := do
   let opts ← getOptions
-  withCumulativeWallClockTime "reap.wall.value" do
-    let generator ← getClient
-    let ppProofState := toString (← Meta.ppProofState mvarIds)
-    let prompt := mkValuePrompt ppProofState
-    let req : OpenAIChatRequest := {
-      model := reap.model.get opts,
-      messages := [ { role := "user", content := prompt } ],
-      n := 1,
-      temperature := (reap.temperature.get opts).toFloat / 100.0,
-      max_tokens := reap.max_tokens.get opts,
-      logprobs := true
-    }
-    let result : Option ValueResult ← retryCoreM? (maxRetries := 3) do
+  let generator ← getClient
+  let ppProofState := toString (← Meta.ppProofState mvarIds)
+  let prompt := mkValuePrompt ppProofState
+  let req : OpenAIChatRequest := {
+    model := reap.model.get opts,
+    messages := [ { role := "user", content := prompt } ],
+    n := 1,
+    temperature := (reap.temperature.get opts).toFloat / 100.0,
+    max_tokens := reap.max_tokens.get opts,
+    logprobs := true
+  }
+  let result : Option ValueResult ← withLogWallClockTime "value" (fun result => json%{ state: $ppProofState, result: $result }) do
+    retryCoreM? (maxRetries := 3) do
       let res ← generator.valueClient.generateChat req
       let res := parseChatResponseOpenAI res
       let res := Json.parse res[0]!.1
@@ -156,4 +159,4 @@ def generateValue (mvarIds : List MVarId) : MetaM Float := do
         | .error _ => throwError "Failed to decode value response"
       else
         throwError "Failed to parse value response as JSON"
-    return -result.get!.score
+  return -result.get!.score
