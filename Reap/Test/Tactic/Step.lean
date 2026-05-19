@@ -15,6 +15,9 @@ elab "guardEvalRejects " s:str : tactic => do
       throwError "expected tactic to be rejected"
 
 theorem evalTacticStr_accepts_trivial : True := by
+  guardEvalRejects "show True from grind?"
+  guardEvalRejects "sorry"
+  guardEvalRejects "hint"
   guardEvalAccepts "trivial"
 
 theorem evalTacticStr_accepts_recursive (n : Nat) : True := by

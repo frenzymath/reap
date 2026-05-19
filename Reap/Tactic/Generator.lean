@@ -38,11 +38,7 @@ def stripThinkingPrefix (s : String) : String :=
     else s
   else s
 
-def filterGeneration (s: String) : Bool :=
-  let banned := ["sorry", "admit", "▅", "apply?", "exact?", "refine?", "calc?", "hint"]
-  !(banned.any fun s' => (s.splitOn s').length > 1)
-
-def retryCoreM? (action : CoreM α) (maxRetries : Nat := 3) : CoreM (Option α) := do
+def retryCoreM? {α : Type _} (action : CoreM α) (maxRetries : Nat := 3) : CoreM (Option α) := do
   let mut result : Option α := none
   let mut i := 0
   while result.isNone && i < maxRetries do
@@ -116,9 +112,8 @@ def generatePPTactics (ppGoal : String) : CoreM (Array PremiseSelectionResult ×
       results := results.insert result
       -- logInfo m!"Generated tactic: {result.1} with probability {result.2}"
     results := results.eraseDupsBy (fun x y => x.1 == y.1)
-    let finalResults := (results.toArray.filter fun x => filterGeneration x.1)
     -- let finalResults := (results.toArray.filter filterGeneration).map fun x => (x, 1.0)
-    return (relatedTheorems, finalResults)
+    return (relatedTheorems, results.toArray)
 
 def Meta.ppProofState (mvarIds : List MVarId) : MetaM Format := do
   return Std.Format.joinSep (← mvarIds.mapM (Meta.ppGoal)) "\n".toFormat
