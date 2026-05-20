@@ -14,6 +14,7 @@ variable {m : Type _ → Type _} [Monad m] [MonadLiftT IO m]
 def appendLogRecord (record : Json) : m Unit := liftM (m := IO) do
   if let some f ← wallClockLogFile.get then
     f.putStrLn record.compress
+    f.flush
 
 def openLogFile (path : System.FilePath) : m Unit := liftM (m := IO) do
   let f ← IO.FS.Handle.mk path .append
