@@ -1,5 +1,6 @@
 module
 public meta import Lean
+public meta import Reap.Tactic.Generator
 public meta import Reap.Tactic.WallClock
 
 open Lean Meta Elab Tactic
@@ -232,7 +233,8 @@ def checkMessages (messages : List Message) : TacticM (EvalResult Unit) := do
   return .ok ()
 
 def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult Unit) := do
-  withLogWallClockTime "tactic_eval" (fun result => json%{ tactic: $str, result: $result }) <| ExceptT.run do
+  let state := toString <| ← TacticGenerator.Meta.ppProofState (← getGoals)
+  withLogWallClockTime "tactic_eval" (fun result => json%{ state: $state, tactic: $str, result: $result }) <| ExceptT.run do
     let stx ← parseTacticStr str
     checkTacticSyntax stx
     let messages ← runTacticSyntax stx heartbeats
