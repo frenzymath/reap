@@ -225,7 +225,9 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     (maxNodes := MCTS.defaultMaxNodes)
     (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := unsafe do
   let opts ← getOptions
-  openLogFile (.mk <| reap.wall_clock_log_path.get opts)
+  let path := reap.wall_clock_log_path.get opts
+  if !path.isEmpty then
+    openLogFile <| .mk path
   let ctx ← mkProofCheckContext
   let params := SearchHyperparameters.fromOptions opts
   let (k, nodes) ← monteCarloTreeSearch (ε := EdgeData)
