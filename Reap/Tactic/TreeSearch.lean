@@ -126,7 +126,7 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
   let heartbeats := reap.heartbeats.get opts
   let priorTemperature := reap.prior_temperature.get opts |>.toFloat
   for (t, ps, prior) in tactics do
-    if ← evalTacticStr ctx t heartbeats then
+    if (← evalTacticStr ctx t heartbeats).isOk then
       let probability := (prior / priorTemperature).exp
       let key ← stateKey
       if let some ((e, _), childPos) := node.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == key then
