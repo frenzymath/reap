@@ -78,42 +78,37 @@ inductive EvalError where
   | parseError (message : String)
   | forbiddenTactic (kind : SyntaxNodeKind)
   | tacticException (message : String)
-  | tacticErrorMessages (messages : List String)
+  | tacticErrorMessages (messages : List SerialMessage)
+  | unassignedGoal
   | assignedProofHasMVarOrSorry
   | auxProofHasMVarOrSorry (declName : Name)
   | auxProofKernelCheckFailed (declName : Name) (message : String)
   | finalProofCheckFailed
+deriving ToJson
 
 namespace EvalError
 
-def kind : EvalError → String
-  | .parseError _ => "parse_error"
-  | .forbiddenTactic _ => "forbidden_tactic"
-  | .tacticException _ => "tactic_exception"
-  | .tacticErrorMessages _ => "tactic_error_messages"
-  | .assignedProofHasMVarOrSorry => "assigned_proof_has_mvar_or_sorry"
-  | .auxProofHasMVarOrSorry _ => "aux_proof_has_mvar_or_sorry"
-  | .auxProofKernelCheckFailed _ _ => "aux_proof_kernel_check_failed"
-  | .finalProofCheckFailed => "final_proof_check_failed"
-
-def toString : EvalError → String
-  | .parseError message => message
-  | .forbiddenTactic kind => s!"forbidden tactic syntax: {kind}"
-  | .tacticException message => message
-  | .tacticErrorMessages messages => String.intercalate "\n" messages
-  | .assignedProofHasMVarOrSorry => "assigned proof contains a metavariable or sorry"
-  | .auxProofHasMVarOrSorry declName => s!"auxiliary proof {declName} contains a metavariable or sorry"
-  | .auxProofKernelCheckFailed declName message => s!"auxiliary proof {declName} failed kernel check:\n{message}"
-  | .finalProofCheckFailed => "final proof check failed"
-
-instance : ToString EvalError := ⟨toString⟩
+def fromException (ex : Exception) : CoreM EvalError := do
+  return .tacticException (← ex.toMessageData.toString)
 
 end EvalError
 
+abbrev EvalResult α := Except EvalError α
+
+instance : ToJson (EvalResult Unit) where
+  toJson
+  | .ok _ => json%{ "ok": null }
+  | .error e => json% { "error": $e }
+
+def withCatchRuntime {α : Type} (act : TacticM (EvalResult α)) : TacticM (EvalResult α) := do
+  try
+    tryCatchRuntimeEx (handler := fun ex => do return .error (← EvalError.fromException ex))
+      act
+  catch ex =>
+    return .error (← EvalError.fromException ex)
+
 def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option PreDefinition) := do
   goal.withContext do
-    unless (← goal.isAssigned) do
-      return none
     let lctx ← getLCtx
     let xs ← getNonAuxFVars
     if numSectionVars > xs.size then
@@ -121,7 +116,7 @@ def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option Pre
     let sectionVars := xs.extract 0 numSectionVars
     let type ← instantiateMVars (← goal.getType)
     let value ← instantiateMVars (mkMVar goal)
-    if type.hasExprMVar || value.hasExprMVar || value.hasSorry then
+    if type.hasExprMVar then
       return none
     let declName ← mkFreshUserName `_step_check
     let (_, levelParamState) := StateT.run (m := Id) (s := { : CollectLevelParams.State}) do
@@ -150,19 +145,6 @@ def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option Pre
       termination := .none
     }
 
-def checkProof (ctx : ProofCheckContext) : TacticM Bool := do
-  for g in ctx.originalGoals do
-    if ← g.isAssigned then
-      let e ← instantiateMVars (mkMVar g)
-      if e.hasSorry || e.hasExprMVar then
-        return False
-
-  let mut preDefs := #[]
-  for goal in ctx.originalGoals do
-    let some preDef ← mkPreDefinition ctx.numSectionFVars goal | return false
-    preDefs := preDefs.push preDef
-  checkPreDefinitions preDefs
-
 partial def collectConstNames (e : Expr) (names : Array Name := #[]) : Array Name :=
   match e with
   | .const name _ => if names.contains name then names else names.push name
@@ -174,7 +156,7 @@ partial def collectConstNames (e : Expr) (names : Array Name := #[]) : Array Nam
   | .mdata _ b | .proj _ _ b => collectConstNames b names
   | _ => names
 
-partial def checkCurrentAuxDeclsInExpr (parentDeclName : Name) (e : Expr) (checked : Array Name := #[]) : MetaM (Except EvalError (Array Name)) := do
+partial def checkCurrentAuxDeclsInExpr (parentDeclName : Name) (e : Expr) (checked : Array Name := #[]) : TacticM (Except EvalError (Array Name)) := do
   let mut checked := checked
   for constName in collectConstNames e do
     if parentDeclName.isPrefixOf constName && constName != parentDeclName && !checked.contains constName then
@@ -192,74 +174,70 @@ partial def checkCurrentAuxDeclsInExpr (parentDeclName : Name) (e : Expr) (check
         | .error err => return .error err
   return .ok checked
 
-def checkAssignedProofs (ctx : ProofCheckContext) : TacticM (Except EvalError Unit) := do
+def checkProof (ctx : ProofCheckContext) : TacticM (EvalResult Unit) := do
   let some parentDeclName ← Term.getDeclName? | return .ok ()
   let mut checked := #[]
-  for goal in ctx.originalGoals do
-    if ← goal.isAssigned then
-      let value ← instantiateMVars (mkMVar goal)
-      if value.hasSorry || value.hasExprMVar then
+
+  for g in ctx.originalGoals do
+    if ← g.isAssigned then
+      let e ← instantiateMVars (mkMVar g)
+      if e.hasSorry || e.hasExprMVar then
         return .error .assignedProofHasMVarOrSorry
-      match ← goal.withContext <| checkCurrentAuxDeclsInExpr parentDeclName value checked with
+      match ← g.withContext <| checkCurrentAuxDeclsInExpr parentDeclName e checked with
       | .ok checked' => checked := checked'
       | .error err => return .error err
+    else
+      return .error .unassignedGoal
+
+  let mut preDefs := #[]
+  for goal in ctx.originalGoals do
+    let some preDef ← mkPreDefinition ctx.numSectionFVars goal | return .error .finalProofCheckFailed
+    preDefs := preDefs.push preDef
+  if !(← checkPreDefinitions preDefs) then
+    return .error .finalProofCheckFailed
   return .ok ()
+
 
 def isQuestionTacticKind (kind : SyntaxNodeKind) : Bool :=
   kind == `sorry || kind == `admit || (if let .str _ x := kind then x.endsWith "?" else false)
 
-partial def findQuestionTacticKind? (stx : Syntax) : Option SyntaxNodeKind :=
+partial def findQuestionTacticKind (stx : Syntax) : Option SyntaxNodeKind :=
   if isQuestionTacticKind stx.getKind then
     some stx.getKind
   else
-    let rec loop (args : Array Syntax) (idx : Nat) : Option SyntaxNodeKind :=
-      if h : idx < args.size then
-        match findQuestionTacticKind? args[idx] with
-        | some kind => some kind
-        | none => loop args (idx + 1)
-      else
-        none
-    loop stx.getArgs 0
+    stx.getArgs.findSome? findQuestionTacticKind
 
-def messageStrings (messages : List Message) : CoreM (List String) :=
-  messages.mapM fun msg => do
-    return s!"{msg.severity}: {← msg.data.toString}"
+def parseTacticStr (str : String) : TacticM (EvalResult Syntax) := do
+  match Parser.runParserCategory (← getEnv) `tactic str with
+  | .ok stx => return .ok stx
+  | .error e => return .error (.parseError e)
 
-def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (Except EvalError Unit) := do
-  withLogWallClockTime "tactic_eval" (fun
-      | .ok _ => json%{ tactic: $str, success: true }
-      | .error err => json%{ tactic: $str, success: false, error_kind: $(err.kind), error: $(toString err) }) do
-    let stx ←
-      match Parser.runParserCategory (← getEnv) `tactic str with
-      | .ok stx => pure stx
-      | .error err => return .error (.parseError err)
-    if let some kind := findQuestionTacticKind? stx then
-      return .error (.forbiddenTactic kind)
-    try
-      let (result, messages) ← withCapturedMessages do
-        try
-          tryCatchRuntimeEx (handler := fun ex => do
-            return (Except.error (.tacticException (← ex.toMessageData.toString)) : Except EvalError Unit)) do
-            withHeartbeats heartbeats do
-              evalTactic stx
-              Term.synthesizeSyntheticMVarsNoPostponing
-            return (Except.ok () : Except EvalError Unit)
-        catch ex =>
-          return (Except.error (.tacticException (← ex.toMessageData.toString)) : Except EvalError Unit)
-      match result with
-      | Except.error err => return .error err
-      | Except.ok _ =>
-        pruneSolvedGoals
-        if hasErrorMessages messages then
-          return .error (.tacticErrorMessages (← messageStrings messages))
-        match ← checkAssignedProofs ctx with
-        | .error err => return .error err
-        | .ok _ => pure ()
-        if (← getGoals).isEmpty then
-          if !(← checkProof ctx) then
-            return .error .finalProofCheckFailed
-    catch ex =>
-      return .error (.tacticException (← ex.toMessageData.toString))
-    return .ok ()
+def checkTacticSyntax (stx : Syntax) : EvalResult Unit :=
+  match findQuestionTacticKind stx with
+  | some kind => .error (.forbiddenTactic kind)
+  | none => .ok ()
+
+def runTacticSyntax (stx : Syntax) (heartbeats : Nat) : TacticM (EvalResult (List Message)) := do
+  let (result, messages) ← withCapturedMessages do
+    withCatchRuntime do
+      withHeartbeats heartbeats <| evalTactic stx
+      Term.synthesizeSyntheticMVarsNoPostponing
+      pruneSolvedGoals
+      return .ok ()
+  return result.map fun _ => messages
+
+def checkMessages (messages : List Message) : TacticM (EvalResult Unit) := do
+  if hasErrorMessages messages then
+    return .error (.tacticErrorMessages (← messages.filterMapM fun x => if x.severity != .information then x.serialize else return none))
+  return .ok ()
+
+def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult Unit) := do
+  withLogWallClockTime "tactic_eval" (fun result => json%{ tactic: $str, result: $result }) <| ExceptT.run do
+    let stx ← parseTacticStr str
+    checkTacticSyntax stx
+    let messages ← runTacticSyntax stx heartbeats
+    checkMessages messages
+    if (← getGoals).isEmpty then
+      checkProof ctx
 
 end Reap.TreeSearch
