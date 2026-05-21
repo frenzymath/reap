@@ -44,9 +44,6 @@ def unifyTypes (t₁ t₂ : Array Expr) : TacticM Bool := do
       break
   return ret
 
-def isSolved : TacticM Bool := do
-  return (← getUnsolvedGoals).isEmpty
-
 abbrev TacGen := List MVarId → MetaM (Array (String × Array PremiseSelectionResult × Float))
 abbrev StateEval := List MVarId → MetaM Float
 
@@ -78,13 +75,21 @@ namespace MCTS
 structure NodeData where
   state : Tactic.SavedState
   key : StateKey
+  isSolved : Bool
   valueSum : Float
   numVisit : Nat
   numEvaluations : Nat
 
 namespace NodeData
 def fromState : TacticM NodeData := do
-  pure ⟨ ← Tactic.saveState, ← stateKey, 0.0, 0, 0 ⟩
+  pure {
+    state := ← Tactic.saveState
+    key := ← stateKey
+    isSolved := (← getUnsolvedGoals).isEmpty
+    valueSum := 0.0
+    numVisit := 0
+    numEvaluations := 0
+  }
 
 def value (node : NodeData) : Float :=
   if node.numVisit == 0 then 0.0 else node.valueSum / node.numVisit.toFloat
@@ -94,7 +99,7 @@ def restore (node : NodeData) : TacticM Unit :=
 
 def isTerminal (node : NodeData) : TacticM Bool := do
   node.restore
-  TreeSearch.isSolved
+  return (← getUnsolvedGoals).isEmpty
 
 end NodeData
 
@@ -128,12 +133,16 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
   for (t, ps, prior) in tactics do
     if (← evalTacticStr ctx t heartbeats).isOk then
       let probability := (prior / priorTemperature).exp
-      let key ← stateKey
-      if let some ((e, _), childPos) := node.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == key then
+      let childData ← NodeData.fromState
+      if let some ((e, c), childPos) := node.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == childData.key then
         let e' := { e with probability := e.probability + probability }
-        modifyAtT nodeIdx fun node => { node with children := node.children.modify childPos fun (_, c) => (e', c) }
+        modifyAtT nodeIdx fun node => {
+          node with
+            data := { node.data with isSolved := node.data.isSolved || c.isSolved || childData.isSolved }
+            children := node.children.modify childPos fun (_, c) => (e', c)
+        }
       else
-        discard <| pushChildT nodeIdx ⟨ t, ps, probability, 0, 0 ⟩ (← NodeData.fromState)
+        discard <| pushChildT nodeIdx ⟨ t, ps, probability, 0, 0 ⟩ childData
 
 structure CQU where
   c : Float
@@ -163,6 +172,7 @@ def ppNodeData (node : NodeData) : TacticM Json := do
   let pp ← (← getUnsolvedGoals).mapM fun g => do return toString (← Meta.ppGoal g)
   return json%{
     state: $(pp),
+    isSolved: $(node.isSolved),
     valueSum: $(node.valueSum),
     numVisit: $(node.numVisit),
     numEvaluations: $(node.numEvaluations)
@@ -214,6 +224,7 @@ def updateEdge (e : EdgeData) (leaf : NodeData) : EdgeData :=
 def updateNode (node : NodeType) (leaf : NodeData) : NodeData :=
   {
     node.data with
+      isSolved := node.data.isSolved || node.children.any fun (_, child) => child.isSolved
       numVisit := node.data.numVisit + 1
       valueSum := node.data.valueSum + leaf.valueSum
   }
