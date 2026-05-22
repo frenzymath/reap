@@ -131,6 +131,7 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
   let heartbeats := reap.heartbeats.get opts
   let priorTemperature := reap.prior_temperature.get opts |>.toFloat
   for (t, ps, prior) in tactics do
+    node.data.state.restore
     if (← evalTacticStr ctx t heartbeats).isOk then
       let probability := (prior / priorTemperature).exp
       let childData ← NodeData.fromState
