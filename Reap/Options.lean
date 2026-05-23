@@ -62,6 +62,10 @@ register_option reap.wall_clock_log_path : String :=
   { defValue := ""
     descr := "Optional JSONL path for per-action wall-clock records. Empty disables file logging." }
 
+register_option reap.raw_tree_path : String :=
+  { defValue := ""
+    descr := "Optional JSON path for the final raw MCTS tree. Empty disables file export." }
+
 register_option reap.c_base : Nat :=
   { defValue := 3200
     descr := "MCTS exploration hyper-parameter c_base." }
