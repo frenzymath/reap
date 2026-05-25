@@ -94,6 +94,9 @@ def fromException (ex : Exception) : CoreM EvalError := do
 
 end EvalError
 
+instance : ToString EvalError where
+  toString err := (toJson err).compress
+
 abbrev EvalResult α := Except EvalError α
 
 instance : ToJson (EvalResult Unit) where
@@ -232,14 +235,20 @@ def checkMessages (messages : List Message) : TacticM (EvalResult Unit) := do
     return .error (.tacticErrorMessages (← messages.filterMapM fun x => if x.severity != .information then x.serialize else return none))
   return .ok ()
 
-def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult Unit) := do
+def evalTacticStrCore (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) (checkFinalProof : Bool) : TacticM (EvalResult Unit) := do
   let state := toString <| ← TacticGenerator.Meta.ppProofState (← getGoals)
   withLogWallClockTime "tactic_eval" (fun result => json%{ state: $state, tactic: $str, result: $result }) <| ExceptT.run do
     let stx ← parseTacticStr str
     checkTacticSyntax stx
     let messages ← runTacticSyntax stx heartbeats
     checkMessages messages
-    if (← getGoals).isEmpty then
+    if checkFinalProof && (← getGoals).isEmpty then
       checkProof ctx
+
+def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult Unit) :=
+  evalTacticStrCore ctx str heartbeats true
+
+def evalTacticStrNoFinalCheck (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult Unit) :=
+  evalTacticStrCore ctx str heartbeats false
 
 end Reap.TreeSearch
