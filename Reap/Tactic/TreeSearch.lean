@@ -69,19 +69,33 @@ def fromOptions (opts : Options) : SearchHyperparameters := {
 end SearchHyperparameters
 
 namespace MCTS
+inductive NodeKind where
+  | orNode
+  | andNode
+deriving BEq, Inhabited
+
+instance : ToJson NodeKind where
+  toJson
+  | .orNode => "OR"
+  | .andNode => "AND"
+
 structure NodeData where
   state : Tactic.SavedState
   key : StateKey
+  toPlay : NodeKind
+  isPartial : Bool
   isSolved : Bool
   valueSum : Float
   numVisit : Nat
   numEvaluations : Nat
 
 namespace NodeData
-def fromState : TacticM NodeData := do
+def fromState (toPlay := NodeKind.orNode) (isPartial := false) : TacticM NodeData := do
   pure {
     state := ← Tactic.saveState
     key := ← stateKey
+    toPlay
+    isPartial
     isSolved := (← getUnsolvedGoals).isEmpty
     valueSum := 0.0
     numVisit := 0
@@ -106,21 +120,80 @@ structure EdgeData where
   probability : Float
   value : Float
   numVisit : Nat := 0
+  isFocus : Bool := false
+  focusIndex : Nat := 0
 deriving ToJson
 
 abbrev NodeType := Node NodeData (EdgeData × NodeData)
 
 abbrev SearchM := IndexedTreeT NodeData EdgeData TacticM
 
+def getNode! (nodeIdx : Nat) : SearchM (Node NodeData (EdgeData × Nat)) := do
+  let nodes ← get
+  let some node := nodes[nodeIdx]? | throwError "MCTS node index out of bounds: {nodeIdx}"
+  return node
+
+def nodeSolved (node : NodeType) : Bool :=
+  match node.data.toPlay with
+  | .orNode => node.data.isSolved || node.children.any fun (_, child) => child.isSolved
+  | .andNode => node.data.isSolved || (!node.children.isEmpty && node.children.all fun (_, child) => child.isSolved)
+
+def refreshNodeSolved (nodeIdx : Nat) : SearchM Unit := do
+  let nodeRef ← getNode! nodeIdx
+  let node ← resolve nodeRef
+  setAtT nodeIdx { nodeRef with data := { nodeRef.data with isSolved := nodeSolved node } }
+
+def focusProbability (numGoals : Nat) : Float :=
+  if numGoals == 0 then 0.0 else 1.0 / numGoals.toFloat
+
+def pushFocusChildren (nodeIdx : Nat) (node : NodeData) : SearchM Unit := do
+  node.state.restore
+  let goals := (← getUnsolvedGoals).toArray
+  let probability := focusProbability goals.size
+  for (goal, i) in goals.zipIdx do
+    node.state.restore
+    setGoals [goal]
+    let childData ← NodeData.fromState (isPartial := true)
+    discard <| pushChildT nodeIdx {
+      tacticStr := s!"focus_goal {i}"
+      premise := #[]
+      probability
+      value := 0.0
+      isFocus := true
+      focusIndex := i
+    } childData
+  node.state.restore
+
+def childKindAfterTactic : TacticM NodeKind := do
+  let goals ← getUnsolvedGoals
+  return if goals.length > 1 then .andNode else .orNode
+
+def updateDuplicateChild (nodeIdx childPos : Nat) (childData : NodeData) : SearchM Unit := do
+  let nodeRef ← getNode! nodeIdx
+  if let some (_, childIdx) := nodeRef.children[childPos]? then
+    let childRef ← getNode! childIdx
+    setAtT childIdx { childRef with data := { childRef.data with isSolved := childRef.data.isSolved || childData.isSolved } }
+
 def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
-    (nodeIdx : Nat) (node : NodeType) : SearchM Unit := do
+    (nodeIdx : Nat) (node : NodeType) : SearchM Float := do
+  if node.data.toPlay == .andNode then
+    if node.children.isEmpty then
+      pushFocusChildren nodeIdx node.data
+      refreshNodeSolved nodeIdx
+    return node.data.value
+
   node.data.state.restore
   let g ← getUnsolvedGoals
   let p' ← if g.isEmpty then
     pure Float.inf
   else
     se g
-  let data' := { node.data with valueSum := p', numEvaluations := node.data.numEvaluations + 1 }
+  let data' := {
+    node.data with
+      valueSum := node.data.valueSum + p'
+      numVisit := node.data.numVisit + 1
+      numEvaluations := node.data.numEvaluations + 1
+  }
   modifyAtT nodeIdx fun node => { node with data := data' }
 
   let tactics ← tg g
@@ -129,18 +202,34 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
   let priorTemperature := reap.prior_temperature.get opts |>.toFloat
   for (t, ps, prior) in tactics do
     node.data.state.restore
-    if (← evalTacticStr ctx t heartbeats).isOk then
+    let result ← if node.data.isPartial then
+      evalTacticStrNoFinalCheck ctx t heartbeats
+    else
+      evalTacticStr ctx t heartbeats
+    if result.isOk then
       let probability := (prior / priorTemperature).exp
-      let childData ← NodeData.fromState
+      let childKind ← childKindAfterTactic
+      let childData ← NodeData.fromState childKind node.data.isPartial
       if let some ((e, c), childPos) := node.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == childData.key then
         let e' := { e with probability := e.probability + probability }
+        updateDuplicateChild nodeIdx childPos childData
         modifyAtT nodeIdx fun node => {
           node with
             data := { node.data with isSolved := node.data.isSolved || c.isSolved || childData.isSolved }
             children := node.children.modify childPos fun (_, c) => (e', c)
         }
       else
-        discard <| pushChildT nodeIdx ⟨ t, ps, probability, 0, 0 ⟩ childData
+        let childIdx ← pushChildT nodeIdx {
+          tacticStr := t
+          premise := ps
+          probability
+          value := 0.0
+        } childData
+        if childData.toPlay == .andNode then
+          pushFocusChildren childIdx childData
+          refreshNodeSolved childIdx
+  refreshNodeSolved nodeIdx
+  return p'
 
 structure CQU where
   c : Float
@@ -155,14 +244,17 @@ def computePUCTScores (params : SearchHyperparameters)
   let c := params.cInit + Float.log ((N + params.cBase + 1) / params.cBase)
   let totalMass := (node.children.map fun (e, _) => e.probability).sum
   node.children.map fun (e, n) =>
-    let Q := params.visitDiscount.pow (n.value - 1)
+    let valueScore := params.visitDiscount.pow (n.value - 1)
+    let Q := match node.data.toPlay with
+      | .orNode => valueScore
+      | .andNode => if n.isSolved then -Float.inf else 1 - valueScore
     let p := e.probability / totalMass
     let U := c * p * N.sqrt / (e.numVisit.toFloat + 1)
     let score := Q + U
     (score, { c := c, Q := Q, U := U })
 
 def shouldProgressiveSample (params : SearchHyperparameters) (node : NodeData) : Bool :=
-  node.numEvaluations.toFloat <=
+  node.toPlay == .orNode && node.numEvaluations.toFloat <=
     params.progressiveSamplingC * Float.pow node.numVisit.toFloat params.progressiveSamplingAlpha
 
 def ppNodeData (node : NodeData) : TacticM Json := do
@@ -170,6 +262,8 @@ def ppNodeData (node : NodeData) : TacticM Json := do
   let pp ← (← getUnsolvedGoals).mapM fun g => do return toString (← Meta.ppGoal g)
   return json%{
     state: $(pp),
+    toPlay: $(node.toPlay),
+    isPartial: $(node.isPartial),
     isSolved: $(node.isSolved),
     valueSum: $(node.valueSum),
     numVisit: $(node.numVisit),
@@ -212,20 +306,95 @@ def selectChild (params : SearchHyperparameters) (node : NodeType) : Option Nat 
           bestScore := score
       return bestIdx
 
-def updateEdge (e : EdgeData) (leaf : NodeData) : EdgeData :=
+def updateEdge (e : EdgeData) (value : Float) : EdgeData :=
   {
     e with
       numVisit := e.numVisit + 1
-      value := e.value + leaf.valueSum
+      value := e.value + value
   }
 
-def updateNode (node : NodeType) (leaf : NodeData) : NodeData :=
+def backpropValueTowardsMin (node : NodeType) : Float :=
+  Id.run do
+    let mut value := 1.0
+    for (_, child) in node.children do
+      if !child.isSolved && child.numVisit > 0 then
+        value := min value child.value
+    return value
+
+def backupValueForParent (node : NodeType) (value : Float) : Float :=
+  match node.data.toPlay with
+  | .orNode => value
+  | .andNode => backpropValueTowardsMin node
+
+def updateNode (node : NodeType) (value : Float) : NodeData :=
   {
     node.data with
-      isSolved := node.data.isSolved || node.children.any fun (_, child) => child.isSolved
+      isSolved := nodeSolved node
       numVisit := node.data.numVisit + 1
-      valueSum := node.data.valueSum + leaf.valueSum
+      valueSum := node.data.valueSum + value
   }
+
+unsafe def reapMCTSStep (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
+    (params : SearchHyperparameters) (nodeIdx : Nat) : SearchM Float := do
+  let x ← getNode! nodeIdx
+  let node ← resolve x
+  match selectChild params node with
+  | none =>
+      visitNode ctx tg se nodeIdx node
+  | some childPos =>
+      let (_, childIdx) := x.children[childPos]'lcProof
+      let value ← reapMCTSStep ctx tg se params childIdx
+      let x ← getNode! nodeIdx
+      let (edge, _) := x.children[childPos]'lcProof
+      let edge' := updateEdge edge value
+      setAtT nodeIdx { x with children := x.children.set! childPos (edge', childIdx) }
+      let node ← resolve (← getNode! nodeIdx)
+      let data' := updateNode node value
+      let x ← getNode! nodeIdx
+      setAtT nodeIdx { x with data := data' }
+      let node ← resolve (← getNode! nodeIdx)
+      return backupValueForParent node value
+
+unsafe def monteCarloTreeSearch (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
+    (params : SearchHyperparameters) (start : NodeData)
+    (maxNodes := MCTS.defaultMaxNodes) (maxSteps := MCTS.defaultMaxSteps) :
+    TacticM (Option Nat × Array (Node NodeData (EdgeData × Nat))) :=
+  StateT.run (s := #[ { data := start } ]) do
+    let mut step := 0
+    while (← get).size <= maxNodes && step < maxSteps do
+      discard <| reapMCTSStep ctx tg se params 0
+      let root ← getNode! 0
+      if root.data.isSolved then
+        return some 0
+      step := step + 1
+    return none
+
+partial def replaySolvedNode (ctx : ProofCheckContext) (heartbeats : Nat)
+    (nodes : Array (Node NodeData (EdgeData × Nat))) (nodeIdx : Nat) : TacticM Unit := do
+  let some node := nodes[nodeIdx]? | throwError "MCTS proof replay node index out of bounds: {nodeIdx}"
+  match node.data.toPlay with
+  | .orNode =>
+      if (← getUnsolvedGoals).isEmpty then
+        return ()
+      let some (edge, childIdx) := node.children.find? fun (edge, childIdx) =>
+        !edge.isFocus && (nodes[childIdx]?.map fun child => child.data.isSolved).getD false
+        | throwError "MCTS proof replay could not find a solved OR child"
+      match ← evalTacticStrNoFinalCheck ctx edge.tacticStr heartbeats with
+      | .ok _ => replaySolvedNode ctx heartbeats nodes childIdx
+      | .error err => throwError "MCTS proof replay failed on tactic {edge.tacticStr}: {(toJson err).compress}"
+  | .andNode =>
+      let goals := (← getUnsolvedGoals).toArray
+      for (edge, childIdx) in node.children do
+        if edge.isFocus then
+          let some child := nodes[childIdx]? | throwError "MCTS proof replay focus child index out of bounds: {childIdx}"
+          unless child.data.isSolved do
+            throwError "MCTS proof replay encountered an unsolved AND child"
+          let some goal := goals[edge.focusIndex]? | throwError "MCTS proof replay focus index out of bounds: {edge.focusIndex}"
+          if !(← goal.isAssigned) then
+            setGoals [goal]
+            replaySolvedNode ctx heartbeats nodes childIdx
+      setGoals goals.toList
+      pruneSolvedGoals
 
 end MCTS
 
@@ -239,14 +408,7 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     openLogFile <| .mk path
   let ctx ← mkProofCheckContext
   let params := SearchHyperparameters.fromOptions opts
-  let (k, nodes) ← monteCarloTreeSearch (ε := EdgeData)
-    (fun x => do x.isTerminal)
-    (visitNode ctx tg se)
-    (fun x => return selectChild params x)
-    (fun _ e _ l => return updateEdge e l)
-    (fun x l => return updateNode x l)
-    (← NodeData.fromState)
-    maxNodes maxSteps
+  let (k, nodes) ← monteCarloTreeSearch ctx tg se params (← NodeData.fromState) maxNodes maxSteps
 
   let ppNodes ← nodes.mapM (ppNode params nodes)
   let info := json%{
@@ -255,8 +417,13 @@ def reapMCTS (tg : TacGen) (se : StateEval)
   }
   writeRawTree (reap.raw_tree_path.get opts) info
 
-  if let some k := k then
-    let some { data := node, .. } := nodes[k]? | unreachable!
-    node.state.restore
+  if k.isSome then
+    let heartbeats := reap.heartbeats.get opts
+    let some root := nodes[0]? | unreachable!
+    root.data.state.restore
+    replaySolvedNode ctx heartbeats nodes 0
+    match ← checkProof ctx with
+    | .ok _ => return ()
+    | .error err => throwError "MCTS final proof check failed after replay: {(toJson err).compress}"
 
 end Reap.TreeSearch
