@@ -55,11 +55,6 @@ def parseCompletionResponseOpenAI (res: OpenAICompletionResponse) : Array String
 def parseChatResponseOpenAI (res: OpenAIChatResponse) : Array (String × Float) :=
   (res.choices.map fun x => (stripThinkingPrefix x.message.content, x.computeLogProbability)).toArray
 
-def mkValuePrompt (tacticState : String) : String :=
-  "Please estimate how many tactic steps are required to solve this proof state in Lean.
-STATE:
-" ++ tacticState
-
 def mkRelatedTheorem (_id: Nat) (ps : PremiseSelectionResult) : String :=
   let formalName := ps.formal_name
   -- let informalName := ps.informal_name
@@ -139,7 +134,11 @@ def generateValue (mvarIds : List MVarId) : MetaM Float := do
   let opts ← getOptions
   let generator ← getClient
   let ppProofState := toString (← Meta.ppProofState mvarIds)
-  let prompt := mkValuePrompt ppProofState
+  let relatedTheorems ← withLogWallClockTime "value_premise_select" (fun result => json%{ state: $ppProofState, result: $result }) do
+    pure <|
+      (← retryCoreM?
+        (PremiseSelectionClient.getPremises ppProofState (reap.num_premises.get opts))).getD #[]
+  let prompt := mkPrompt ppProofState relatedTheorems
   let req : OpenAIChatRequest := {
     model := reap.model.get opts,
     messages := [ { role := "user", content := prompt } ],
@@ -148,7 +147,7 @@ def generateValue (mvarIds : List MVarId) : MetaM Float := do
     max_tokens := reap.max_tokens.get opts,
     logprobs := true
   }
-  let result : Option ValueResult ← withLogWallClockTime "value" (fun result => json%{ state: $ppProofState, result: $result }) do
+  let result : Option ValueResult ← withLogWallClockTime "value" (fun result => json%{ state: $ppProofState, ps: $relatedTheorems, result: $result }) do
     retryCoreM? (maxRetries := 3) do
       let res ← generator.valueClient.generateChat req
       let res := parseChatResponseOpenAI res
