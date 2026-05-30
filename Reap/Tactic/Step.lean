@@ -203,7 +203,8 @@ def checkProof (ctx : ProofCheckContext) : TacticM (EvalResult Unit) := do
 
 
 def isQuestionTacticKind (kind : SyntaxNodeKind) : Bool :=
-  kind == `sorry || kind == `admit || (if let .str _ x := kind then x.endsWith "?" else false)
+  kind == `sorry || kind == `admit || kind == `Lean.Parser.Tactic.repeat' ||
+    (if let .str _ x := kind then x.endsWith "?" else false)
 
 partial def findQuestionTacticKind (stx : Syntax) : Option SyntaxNodeKind :=
   if isQuestionTacticKind stx.getKind then
