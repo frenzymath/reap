@@ -19,6 +19,7 @@ theorem evalTacticStr_accepts_trivial : True := by
   guardEvalRejects "show True from grind?"
   guardEvalRejects "sorry"
   guardEvalRejects "hint"
+  guardEvalRejects "repeat' trivial"
   guardEvalAccepts "trivial"
 
 theorem evalTacticStr_accepts_recursive (n : Nat) : True := by
