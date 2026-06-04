@@ -1,6 +1,8 @@
 import Reap.Tactic.Syntax
 
+open Lean Meta Elab Tactic
 open Reap.TreeSearch
+open TreeSearch
 
 set_option linter.unusedSimpArgs false
 
@@ -28,6 +30,41 @@ def existsTacGen : TacGen := fun _ => do
     ("rfl", #[], 1.0)
   ]
 
+def selfLoopTacGen : TacGen := fun _ => do
+  return #[
+    ("skip", #[], 1.0),
+    ("trivial", #[], 1.0)
+  ]
+
+def hasLocalDeclNamed (goals : List MVarId) (name : Name) : MetaM Bool := do
+  let some goal := goals.head? | return false
+  goal.withContext do
+    for localDecl in ← getLCtx do
+      if localDecl.userName == name then
+        return true
+    return false
+
+def ancestorLoopTacGen : TacGen := fun goals => do
+  if ← hasLocalDeclNamed goals `h then
+    return #[
+      ("clear h", #[], 1.0),
+      ("exact True.intro", #[], 1.0)
+    ]
+  else
+    return #[
+      ("have h : True := by trivial", #[], 1.0),
+      ("have h : True := by trivial", #[], 1.0)
+    ]
+
+def runMCTSForTest (tg : TacGen) (maxNodes := 32) (maxSteps := 32) :
+    TacticM (Option Nat × Array (Node MCTS.NodeData (MCTS.EdgeData × Nat))) := unsafe do
+  let ctx ← mkProofCheckContext
+  let params := SearchHyperparameters.fromOptions (← getOptions)
+  MCTS.monteCarloTreeSearch ctx tg andOrStateEval params (← MCTS.NodeData.fromState) maxNodes maxSteps
+
+def childTacticStrings (node : Node MCTS.NodeData (MCTS.EdgeData × Nat)) : Array String :=
+  node.children.map fun (edge, _) => edge.tacticStr
+
 example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
   constructor
   run_tac do
@@ -45,6 +82,34 @@ example : ∃ n : Nat, n = n := by
       throwError "expected constructor on existential with metavariable goals to stay an OR node"
   · rfl
   · exact 0
+
+example : True := by
+  run_tac do
+    let (_, nodes) ← runMCTSForTest selfLoopTacGen (maxNodes := 8) (maxSteps := 8)
+    let some root := nodes[0]? | unreachable!
+    let tactics := childTacticStrings root
+    if tactics.contains "skip" then
+      throwError "expected ancestor self-loop tactic to be dropped"
+    unless tactics.contains "trivial" do
+      throwError "expected non-loop solving tactic to remain"
+
+example : True := by
+  run_tac do
+    let (_, nodes) ← runMCTSForTest ancestorLoopTacGen (maxNodes := 8) (maxSteps := 8)
+    let some root := nodes[0]? | unreachable!
+    unless root.children.size == 1 do
+      throwError "expected duplicate non-loop child states to merge"
+    let some (rootEdge, childIdx) := root.children[0]? | unreachable!
+    unless rootEdge.tacticStr == "have h : True := by trivial" do
+      throwError "unexpected root tactic after duplicate merge: {rootEdge.tacticStr}"
+    unless rootEdge.probability > 1.9 do
+      throwError "expected duplicate child prior mass to be merged"
+    let some child := nodes[childIdx]? | unreachable!
+    let tactics := childTacticStrings child
+    if tactics.contains "clear h" then
+      throwError "expected depth ancestor-loop tactic to be dropped"
+    unless tactics.contains "exact True.intro" do
+      throwError "expected non-loop child solving tactic to remain"
 
 example (a b c : Nat) (h1 : a = b) (h2 : b = c) : a = c := by
   run_tac reapMCTS transTacGen andOrStateEval (maxNodes := 32) (maxSteps := 32)

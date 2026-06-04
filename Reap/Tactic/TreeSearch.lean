@@ -199,6 +199,7 @@ def updateDuplicateChild (nodeIdx childPos : Nat) (childData : NodeData) : Searc
     setAtT childIdx { childRef with data := { childRef.data with isSolved := childRef.data.isSolved || childData.isSolved } }
 
 def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
+    (ancestorKeys : Std.HashSet StateKey)
     (nodeIdx : Nat) (node : NodeType) : SearchM Float := do
   if node.data.toPlay == .andNode then
     if node.children.isEmpty then
@@ -234,24 +235,25 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
       let probability := (prior / priorTemperature).exp
       let childKind ← childKindAfterTactic
       let childData ← NodeData.fromState childKind node.data.isPartial
-      if let some ((e, c), childPos) := node.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == childData.key then
-        let e' := { e with probability := e.probability + probability }
-        updateDuplicateChild nodeIdx childPos childData
-        modifyAtT nodeIdx fun node => {
-          node with
-            data := { node.data with isSolved := node.data.isSolved || c.isSolved || childData.isSolved }
-            children := node.children.modify childPos fun (_, c) => (e', c)
-        }
-      else
-        let childIdx ← pushChildT nodeIdx {
-          tacticStr := t
-          premise := ps
-          probability
-          value := 0.0
-        } childData
-        if childData.toPlay == .andNode then
-          pushFocusChildren childIdx childData
-          refreshNodeSolved childIdx
+      if !ancestorKeys.contains childData.key then
+        if let some ((e, c), childPos) := node.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == childData.key then
+          let e' := { e with probability := e.probability + probability }
+          updateDuplicateChild nodeIdx childPos childData
+          modifyAtT nodeIdx fun node => {
+            node with
+              data := { node.data with isSolved := node.data.isSolved || c.isSolved || childData.isSolved }
+              children := node.children.modify childPos fun (_, c) => (e', c)
+          }
+        else
+          let childIdx ← pushChildT nodeIdx {
+            tacticStr := t
+            premise := ps
+            probability
+            value := 0.0
+          } childData
+          if childData.toPlay == .andNode then
+            pushFocusChildren childIdx childData
+            refreshNodeSolved childIdx
   refreshNodeSolved nodeIdx
   return p'
 
@@ -367,15 +369,17 @@ def updateNode (node : NodeType) (value : Float) : NodeData :=
   }
 
 unsafe def reapMCTSStep (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
-    (params : SearchHyperparameters) (nodeIdx : Nat) : SearchM Float := do
+    (params : SearchHyperparameters) (ancestorKeys : Std.HashSet StateKey)
+    (nodeIdx : Nat) : SearchM Float := do
   let x ← getNode! nodeIdx
   let node ← resolve x
   match selectChild params node with
   | none =>
-      visitNode ctx tg se nodeIdx node
+      visitNode ctx tg se ancestorKeys nodeIdx node
   | some childPos =>
       let (_, childIdx) := x.children[childPos]'lcProof
-      let childValue ← reapMCTSStep ctx tg se params childIdx
+      let childRef ← getNode! childIdx
+      let childValue ← reapMCTSStep ctx tg se params (ancestorKeys.insert childRef.data.key) childIdx
       let x ← getNode! nodeIdx
       let (edge, _) := x.children[childPos]'lcProof
       let value := childValue - edgeStepCost edge
@@ -395,7 +399,7 @@ unsafe def monteCarloTreeSearch (ctx : ProofCheckContext) (tg : TacGen) (se : St
   StateT.run (s := #[ { data := start } ]) do
     let mut step := 0
     while (← get).size <= maxNodes && step < maxSteps do
-      discard <| reapMCTSStep ctx tg se params 0
+      discard <| reapMCTSStep ctx tg se params {start.key} 0
       let root ← getNode! 0
       if root.data.isSolved then
         return some 0
