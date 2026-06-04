@@ -34,10 +34,9 @@ def collectGoalMVars (goal : MVarId) : TacticM (Array MVarId) := goal.withContex
   let collect : StateRefT CollectMVars.State MetaM Unit := do
     Meta.collectMVars (← goal.getType)
     for localDecl in (← getLCtx) do
-      unless localDecl.isImplementationDetail do
-        Meta.collectMVars localDecl.type
-        if let some value := localDecl.value? then
-          Meta.collectMVars value
+      Meta.collectMVars localDecl.type
+      if let some value := localDecl.value? then
+        Meta.collectMVars value
   let (_, state) ← collect.run { result := #[goal] }
   return state.result
 
