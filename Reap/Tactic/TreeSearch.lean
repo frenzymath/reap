@@ -30,6 +30,26 @@ def getGoalTypes : TacticM (Option (Array Expr)) := do
       goalTypes := goalTypes.push t
   return some goalTypes
 
+def goalContainsExprMVar (goal : MVarId) : TacticM Bool := goal.withContext do
+  let target ← goal.getTypeCleanup
+  if target.hasExprMVar then
+    return true
+  for localDecl in ← getLCtx do
+    let type ← instantiateMVars localDecl.type
+    if type.hasExprMVar then
+      return true
+    if let some value := localDecl.value? then
+      let value ← instantiateMVars value
+      if value.hasExprMVar then
+        return true
+  return false
+
+def anyGoalContainsExprMVar (goals : List MVarId) : TacticM Bool := do
+  for goal in goals do
+    if ← goalContainsExprMVar goal then
+      return true
+  return false
+
 def unifyTypes (t₁ t₂ : Array Expr) : TacticM Bool := do
   let mut ret := true
   let mut t₂' := t₂
@@ -166,7 +186,11 @@ def pushFocusChildren (nodeIdx : Nat) (node : NodeData) : SearchM Unit := do
 
 def childKindAfterTactic : TacticM NodeKind := do
   let goals ← getUnsolvedGoals
-  return if goals.length > 1 then .andNode else .orNode
+  if goals.length <= 1 then
+    return .orNode
+  if ← goals.anyM goalContainsExprMVar then
+    return .orNode
+  return .andNode
 
 def updateDuplicateChild (nodeIdx childPos : Nat) (childData : NodeData) : SearchM Unit := do
   let nodeRef ← getNode! nodeIdx
