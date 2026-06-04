@@ -38,7 +38,7 @@ def collectGoalMVars (goal : MVarId) : TacticM (Array MVarId) := goal.withContex
         Meta.collectMVars localDecl.type
         if let some value := localDecl.value? then
           Meta.collectMVars value
-  let (_, state) ← collect.run {}
+  let (_, state) ← collect.run { result := #[goal] }
   return state.result
 
 def sharesMVar (a b : Array MVarId) : Bool :=

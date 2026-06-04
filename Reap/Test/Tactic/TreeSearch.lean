@@ -16,7 +16,7 @@ example (a b c d e f : Nat) (h₁ : a = b) (h₂ : b = c) (h₃ : d = e) (h₄ :
   trans
   rotate_left 3
   trans
-  run_tac guardGoalDependencyGroupIndices #[#[0, 1], #[2], #[3], #[4, 5], #[6]]
+  run_tac guardGoalDependencyGroupIndices #[#[0, 1, 2], #[3], #[4, 5, 6]]
   repeat' assumption
 
 example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
