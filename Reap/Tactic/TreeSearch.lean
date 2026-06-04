@@ -185,7 +185,7 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
   node.data.state.restore
   let g ← getUnsolvedGoals
   let p' ← if g.isEmpty then
-    pure Float.inf
+    pure 0.0
   else
     se g
   let data' := {
@@ -237,6 +237,9 @@ structure CQU where
   U : Float
 deriving Inhabited, ToJson
 
+def edgeStepCost (edge : EdgeData) : Float :=
+  if edge.isFocus then 0.0 else 1.0
+
 def computePUCTScores (params : SearchHyperparameters)
     (node : NodeType) : Array (Float × CQU) :=
   -- exploration factor
@@ -244,7 +247,12 @@ def computePUCTScores (params : SearchHyperparameters)
   let c := params.cInit + Float.log ((N + params.cBase + 1) / params.cBase)
   let totalMass := (node.children.map fun (e, _) => e.probability).sum
   node.children.map fun (e, n) =>
-    let valueScore := params.visitDiscount.pow (n.value - 1)
+    let valueScore :=
+      if n.numVisit > 0 then
+        let value := n.value - edgeStepCost e
+        params.visitDiscount.pow (-1.0 - value)
+      else
+        0.0
     let Q := match node.data.toPlay with
       | .orNode => valueScore
       | .andNode => if n.isSolved then -Float.inf else 1 - valueScore
@@ -343,9 +351,10 @@ unsafe def reapMCTSStep (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
       visitNode ctx tg se nodeIdx node
   | some childPos =>
       let (_, childIdx) := x.children[childPos]'lcProof
-      let value ← reapMCTSStep ctx tg se params childIdx
+      let childValue ← reapMCTSStep ctx tg se params childIdx
       let x ← getNode! nodeIdx
       let (edge, _) := x.children[childPos]'lcProof
+      let value := childValue - edgeStepCost edge
       let edge' := updateEdge edge value
       setAtT nodeIdx { x with children := x.children.set! childPos (edge', childIdx) }
       let node ← resolve (← getNode! nodeIdx)
