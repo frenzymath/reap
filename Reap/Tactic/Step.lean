@@ -236,20 +236,22 @@ def checkMessages (messages : List Message) : TacticM (EvalResult Unit) := do
     return .error (.tacticErrorMessages (← messages.filterMapM fun x => if x.severity != .information then x.serialize else return none))
   return .ok ()
 
-def evalTacticStrCore (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) (checkFinalProof : Bool) : TacticM (EvalResult Unit) := do
+def evalTacticStrCore (str : String) (heartbeats : Nat) (checkCtx? : Option ProofCheckContext) : TacticM (EvalResult Unit) := do
   let state := toString <| ← TacticGenerator.Meta.ppProofState (← getGoals)
   withLogWallClockTime "tactic_eval" (fun result => json%{ state: $state, tactic: $str, result: $result }) <| ExceptT.run do
     let stx ← parseTacticStr str
     checkTacticSyntax stx
     let messages ← runTacticSyntax stx heartbeats
     checkMessages messages
-    if checkFinalProof && (← getGoals).isEmpty then
-      checkProof ctx
+    if (← getGoals).isEmpty then
+      match checkCtx? with
+      | some checkCtx => checkProof checkCtx
+      | none => pure ()
 
 def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult Unit) :=
-  evalTacticStrCore ctx str heartbeats true
+  evalTacticStrCore str heartbeats (some ctx)
 
-def evalTacticStrNoFinalCheck (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult Unit) :=
-  evalTacticStrCore ctx str heartbeats false
+def evalTacticStrNoFinalCheck (_ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult Unit) :=
+  evalTacticStrCore str heartbeats none
 
 end Reap.TreeSearch

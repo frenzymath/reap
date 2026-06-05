@@ -103,19 +103,19 @@ structure NodeData where
   state : Tactic.SavedState
   key : StateKey
   toPlay : NodeKind
-  isPartial : Bool
+  partialGoal : Option MVarId
   isSolved : Bool
   valueSum : Float
   numVisit : Nat
   numEvaluations : Nat
 
 namespace NodeData
-def fromState (toPlay := NodeKind.orNode) (isPartial := false) : TacticM NodeData := do
+def fromState (toPlay := NodeKind.orNode) (partialGoal : Option MVarId := none) : TacticM NodeData := do
   pure {
     state := ← Tactic.saveState
     key := ← stateKey
     toPlay
-    isPartial
+    partialGoal
     isSolved := (← getUnsolvedGoals).isEmpty
     valueSum := 0.0
     numVisit := 0
@@ -131,6 +131,11 @@ def restore (node : NodeData) : TacticM Unit :=
 def isTerminal (node : NodeData) : TacticM Bool := do
   node.restore
   return (← getUnsolvedGoals).isEmpty
+
+def proofCheckContext (node : NodeData) (ctx : ProofCheckContext) : ProofCheckContext :=
+  match node.partialGoal with
+  | some goal => { ctx with originalGoals := [goal] }
+  | none => ctx
 
 end NodeData
 
@@ -173,7 +178,7 @@ def pushFocusChildren (nodeIdx : Nat) (node : NodeData) : SearchM Unit := do
   for (goal, i) in goals.zipIdx do
     node.state.restore
     setGoals [goal]
-    let childData ← NodeData.fromState (isPartial := true)
+    let childData ← NodeData.fromState (partialGoal := some goal)
     discard <| pushChildT nodeIdx {
       tacticStr := s!"focus_goal {i}"
       premise := #[]
@@ -227,16 +232,15 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
   let priorTemperature := reap.prior_temperature.get opts |>.toFloat
   for (t, ps, prior) in tactics do
     node.data.state.restore
-    let result ← if node.data.isPartial then
-      evalTacticStrNoFinalCheck ctx t heartbeats
-    else
-      evalTacticStr ctx t heartbeats
+    let result ← evalTacticStr (node.data.proofCheckContext ctx) t heartbeats
     if result.isOk then
       let probability := (prior / priorTemperature).exp
       let childKind ← childKindAfterTactic
-      let childData ← NodeData.fromState childKind node.data.isPartial
+      let childData ← NodeData.fromState childKind node.data.partialGoal
       if !ancestorKeys.contains childData.key then
-        if let some ((e, c), childPos) := node.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == childData.key then
+        let parentRef ← getNode! nodeIdx
+        let parent ← resolve parentRef
+        if let some ((e, c), childPos) := parent.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == childData.key then
           let e' := { e with probability := e.probability + probability }
           updateDuplicateChild nodeIdx childPos childData
           modifyAtT nodeIdx fun node => {
@@ -297,7 +301,7 @@ def ppNodeData (node : NodeData) : TacticM Json := do
   return json%{
     state: $(pp),
     toPlay: $(node.toPlay),
-    isPartial: $(node.isPartial),
+    isPartial: $(node.partialGoal.isSome),
     isSolved: $(node.isSolved),
     valueSum: $(node.valueSum),
     numVisit: $(node.numVisit),

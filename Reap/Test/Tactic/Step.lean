@@ -22,6 +22,10 @@ theorem evalTacticStr_accepts_trivial : True := by
   guardEvalRejects "repeat' trivial"
   guardEvalAccepts "trivial"
 
+theorem evalTacticStr_rejects_placeholder_closed_goal : True := by
+  guardEvalRejects "cases (_ : False)"
+  trivial
+
 theorem evalTacticStr_accepts_recursive (n : Nat) : True := by
   guardEvalAccepts "cases n with | zero => trivial | succ n => exact evalTacticStr_accepts_recursive n"
 
