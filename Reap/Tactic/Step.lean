@@ -10,8 +10,11 @@ public meta section
 
 namespace Reap.TreeSearch
 
-def withHeartbeats {m : Type _ → Type _} {α : Type _} [Monad m] [MonadWithReaderOf Core.Context m] (heartbeats : Nat) : m α → m α :=
-  withReader (fun s => { s with maxHeartbeats := heartbeats })
+def withHeartbeats {m : Type _ → Type _} {α : Type _}
+    [Monad m] [MonadWithReaderOf Core.Context m] [MonadControlT CoreM m]
+    (heartbeats : Nat) (x : m α) : m α :=
+  withCurrHeartbeats <|
+    withReader (fun s => { s with maxHeartbeats := heartbeats }) x
 
 partial def collectAuxDeclNames (lctx : LocalContext) (e : Expr) (names : Array Name := #[]) : Array Name :=
   match e with
