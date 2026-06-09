@@ -210,10 +210,13 @@ def isQuestionTacticKind (kind : SyntaxNodeKind) : Bool :=
     (if let .str _ x := kind then x.endsWith "?" else false)
 
 partial def findQuestionTacticKind (stx : Syntax) : Option SyntaxNodeKind :=
-  if isQuestionTacticKind stx.getKind then
-    some stx.getKind
-  else
-    stx.getArgs.findSome? findQuestionTacticKind
+  match stx with
+  | .node _ kind args =>
+      if isQuestionTacticKind kind then
+        some kind
+      else
+        args.findSome? findQuestionTacticKind
+  | _ => none
 
 def parseTacticStr (str : String) : TacticM (EvalResult Syntax) := do
   match Parser.runParserCategory (← getEnv) `tactic str with
