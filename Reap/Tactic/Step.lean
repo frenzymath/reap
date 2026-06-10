@@ -82,6 +82,7 @@ inductive EvalError where
   | parseError (message : String)
   | forbiddenTactic (kind : SyntaxNodeKind)
   | tacticException (message : String)
+  | tacticTimeout
   | tacticErrorMessages (messages : List SerialMessage)
   | unassignedGoal
   | assignedProofHasMVarOrSorry
@@ -163,7 +164,7 @@ partial def collectConstNames (e : Expr) (names : Array Name := #[]) : Array Nam
   | .mdata _ b | .proj _ _ b => collectConstNames b names
   | _ => names
 
-partial def checkCurrentAuxDeclsInExpr (parentDeclName : Name) (e : Expr) (checked : Array Name := #[]) : TacticM (Except EvalError (Array Name)) := do
+partial def checkCurrentAuxDeclsInExpr (parentDeclName : Name) (e : Expr) (checked : Array Name := #[]) : TacticM (EvalResult (Array Name)) := do
   let mut checked := checked
   for constName in collectConstNames e do
     if parentDeclName.isPrefixOf constName && constName != parentDeclName && !checked.contains constName then
@@ -228,14 +229,24 @@ def checkTacticSyntax (stx : Syntax) : EvalResult Unit :=
   | some kind => .error (.forbiddenTactic kind)
   | none => .ok ()
 
-def runTacticSyntax (stx : Syntax) (heartbeats : Nat) : TacticM (EvalResult (List Message)) := do
-  let (result, messages) ← withCapturedMessages do
+def withTimeout {α : Type} (timeout : Nat) (act : TacticM α) : TacticM (Option α) := do
+  let deadline := (← IO.monoMsNow) + timeout
+  let (cancel, task) ← TacticM.asTask act
+  while (← IO.monoMsNow) <= deadline do
+    if ← IO.hasFinished task then return some (← task.get)
+    IO.sleep 1000
+  cancel
+  return none
+
+def runTacticSyntax (stx : Syntax) (heartbeats : Nat) (timeout : Nat) : TacticM (EvalResult (List Message)) := do
+  match ← withTimeout timeout (withCapturedMessages do
     withCatchRuntime do
       withHeartbeats heartbeats <| evalTactic stx
       Term.synthesizeSyntheticMVarsNoPostponing
       pruneSolvedGoals
-      return .ok ()
-  return result.map fun _ => messages
+      return .ok ()) with
+  | some (result, messages) => return result.map fun _ => messages
+  | none => return .error .tacticTimeout
 
 def checkMessages (messages : List Message) : TacticM (EvalResult Unit) := do
   if hasErrorMessages messages then
@@ -252,7 +263,7 @@ def evalTacticStrCore (str : String) (heartbeats : Nat) (checkCtx? : Option Proo
   withLogWallClockTime "tactic_eval" (fun result => json%{ state: $state, tactic: $str, result: $result }) <| ExceptT.run do
     let stx ← parseTacticStr str
     checkTacticSyntax stx
-    let messages ← runTacticSyntax stx heartbeats
+    let messages ← runTacticSyntax stx heartbeats (reap.timeout.get (← getOptions))
     checkMessages messages
     if (← getGoals).isEmpty then
       match checkCtx? with

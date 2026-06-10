@@ -58,6 +58,11 @@ register_option reap.heartbeats : Nat := {
   descr := "Maximum heartbeats per tactic"
 }
 
+register_option reap.timeout : Nat := {
+  defValue := 5000
+  descr := "Timeout in milliseconds per tactic"
+}
+
 register_option reap.wall_clock_log_path : String :=
   { defValue := ""
     descr := "Optional JSONL path for per-action wall-clock records. Empty disables file logging." }
