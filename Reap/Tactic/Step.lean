@@ -223,18 +223,6 @@ def parseTacticStr (str : String) : TacticM (EvalResult Syntax) := do
   | .ok stx => return .ok stx
   | .error e => return .error (.parseError e)
 
-partial def formatSyntaxTree (stx : Syntax) (indent : Nat := 0) : String :=
-  let pad := String.ofList (List.replicate indent ' ')
-  match stx with
-  | .missing => s!"{pad}<missing>"
-  | .atom _ val => s!"{pad}atom {val}"
-  | .ident _ _ val _ => s!"{pad}ident {val}"
-  | .node _ kind args =>
-      let children := args.toList.map (fun arg => formatSyntaxTree arg (indent + 2))
-      match children with
-      | [] => s!"{pad}node {kind}"
-      | _ => s!"{pad}node {kind}\n{String.intercalate "\n" children}"
-
 def checkTacticSyntax (stx : Syntax) : EvalResult Unit :=
   match findQuestionTacticKind stx with
   | some kind => .error (.forbiddenTactic kind)
@@ -278,8 +266,3 @@ def evalTacticStrNoFinalCheck (_ctx : ProofCheckContext) (str : String) (heartbe
   evalTacticStrCore str heartbeats none
 
 end Reap.TreeSearch
-
-elab "print_syntax_tree " s:str : tactic => do
-  match ← Reap.TreeSearch.parseTacticStr s.getString with
-  | .ok stx => logInfo (Reap.TreeSearch.formatSyntaxTree stx)
-  | .error err => throwError "failed to parse tactic: {toString err}"
