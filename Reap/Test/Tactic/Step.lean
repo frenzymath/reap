@@ -32,6 +32,34 @@ elab "guardEvalRejects " s:str : tactic => do
     if result.isOk then
       throwError "expected tactic to be rejected"
 
+elab "guardRunTacticSyntaxTimesOut " s:str : tactic => do
+  withoutModifyingState do
+    match ← parseTacticStr s.getString with
+    | .error err => throwError "failed to parse tactic: {toString err}"
+    | .ok stx =>
+        match ← runTacticSyntax stx 1000000000000 100 with
+        | .error .tacticTimeout => pure ()
+        | .error err => throwError "expected tactic timeout, got: {toString err}"
+        | .ok _ => throwError "expected tactic timeout, got success"
+
+elab "guardRunTacticSyntaxAccepts " s:str : tactic => do
+  match ← parseTacticStr s.getString with
+  | .error err => throwError "failed to parse tactic: {toString err}"
+  | .ok stx =>
+      match ← runTacticSyntax stx 200000 5000 with
+      | .ok _ => pure ()
+      | .error err => throwError "expected tactic success, got: {toString err}"
+
+elab "guardRunTacticSyntaxRejectsNonTimeout " s:str : tactic => do
+  withoutModifyingState do
+    match ← parseTacticStr s.getString with
+    | .error err => throwError "failed to parse tactic: {toString err}"
+    | .ok stx =>
+        match ← runTacticSyntax stx 200000 5000 with
+        | .error .tacticTimeout => throwError "expected non-timeout tactic error"
+        | .error _ => pure ()
+        | .ok _ => throwError "expected tactic error, got success"
+
 theorem evalTacticStr_accepts_trivial : True := by
   guardEvalRejects "show True from grind?"
   guardEvalRejects "apply?"
@@ -47,6 +75,17 @@ theorem evalTacticStr_rejects_placeholder_closed_goal : True := by
 theorem print_syntax_tree : True := by
   print_syntax_tree "have theorem? := ?_"
   print_syntax_tree "apply?"
+  trivial
+
+theorem runTacticSyntax_times_out_repeat_have : True := by
+  guardRunTacticSyntaxTimesOut "repeat' have h : True := by trivial"
+  trivial
+
+theorem runTacticSyntax_accepts_with_timeout : True := by
+  guardRunTacticSyntaxAccepts "trivial"
+
+theorem runTacticSyntax_rejects_without_timeout : True := by
+  guardRunTacticSyntaxRejectsNonTimeout "exact (0 : Nat)"
   trivial
 
 theorem evalTacticStr_accepts_recursive (n : Nat) : True := by
