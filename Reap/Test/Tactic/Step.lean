@@ -17,6 +17,7 @@ elab "guardEvalRejects " s:str : tactic => do
 
 theorem evalTacticStr_accepts_trivial : True := by
   guardEvalRejects "show True from grind?"
+  guardEvalRejects "apply?"
   guardEvalRejects "sorry"
   guardEvalRejects "hint"
   guardEvalRejects "repeat' trivial"
@@ -24,6 +25,11 @@ theorem evalTacticStr_accepts_trivial : True := by
 
 theorem evalTacticStr_rejects_placeholder_closed_goal : True := by
   guardEvalRejects "cases (_ : False)"
+  trivial
+
+theorem print_syntax_tree : True := by
+  print_syntax_tree "have theorem? := ?_"
+  print_syntax_tree "apply?"
   trivial
 
 theorem evalTacticStr_accepts_recursive (n : Nat) : True := by
