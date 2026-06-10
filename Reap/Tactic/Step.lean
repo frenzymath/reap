@@ -256,6 +256,11 @@ def checkMessages (messages : List Message) : TacticM (EvalResult Unit) := do
 
 def evalTacticStrCore (str : String) (heartbeats : Nat) (checkCtx? : Option ProofCheckContext) : TacticM (EvalResult Unit) := do
   let state := toString <| ← TacticGenerator.Meta.ppProofState (← getGoals)
+  appendLogRecord (json%{
+    name: "tactic_eval_pre",
+    start: $(← IO.monoNanosNow.toIO),
+    extra: { state: $state, tactic: $str }
+  })
   withLogWallClockTime "tactic_eval" (fun result => json%{ state: $state, tactic: $str, result: $result }) <| ExceptT.run do
     let stx ← parseTacticStr str
     checkTacticSyntax stx
