@@ -2,6 +2,23 @@ import Reap.Tactic.Step
 
 open Lean Meta Elab Tactic Reap.TreeSearch
 
+partial def formatSyntaxTree (stx : Syntax) (indent : Nat := 0) : String :=
+  let pad := String.ofList (List.replicate indent ' ')
+  match stx with
+  | .missing => s!"{pad}<missing>"
+  | .atom _ val => s!"{pad}atom {val}"
+  | .ident _ _ val _ => s!"{pad}ident {val}"
+  | .node _ kind args =>
+      let children := args.toList.map (fun arg => formatSyntaxTree arg (indent + 2))
+      match children with
+      | [] => s!"{pad}node {kind}"
+      | _ => s!"{pad}node {kind}\n{String.intercalate "\n" children}"
+
+elab "print_syntax_tree " s:str : tactic => do
+  match ← parseTacticStr s.getString with
+  | .ok stx => logInfo (formatSyntaxTree stx)
+  | .error err => throwError "failed to parse tactic: {toString err}"
+
 elab "guardEvalAccepts " s:str : tactic => do
   let ctx ← mkProofCheckContext
   match ← evalTacticStr ctx s.getString 200000 with
