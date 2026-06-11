@@ -56,6 +56,16 @@ def ancestorLoopTacGen : TacGen := fun goals => do
       ("have h : True := by trivial", #[], 1.0)
     ]
 
+def usedPremiseTacGen : TacGen := fun _ => do
+  return #[
+    ("exact Nat.succ_eq_add_one 0", #[], 1.0)
+  ]
+
+def complexUsedPremiseTacGen : TacGen := fun _ => do
+  return #[
+    ("exact Eq.trans (Nat.succ_eq_add_one 0) h", #[], 1.0)
+  ]
+
 def runMCTSForTest (tg : TacGen) (maxNodes := 32) (maxSteps := 32) :
     TacticM (Option Nat × Array (Node MCTS.NodeData (MCTS.EdgeData × Nat))) := unsafe do
   let ctx ← mkProofCheckContext
@@ -110,6 +120,60 @@ example : True := by
       throwError "expected depth ancestor-loop tactic to be dropped"
     unless tactics.contains "exact True.intro" do
       throwError "expected non-loop child solving tactic to remain"
+
+example : Nat.succ 0 = 0 + 1 := by
+  run_tac do
+    let saved ← saveState
+    let (_, nodes) ← runMCTSForTest usedPremiseTacGen (maxNodes := 8) (maxSteps := 8)
+    saved.restore
+    let some root := nodes[0]? | unreachable!
+    let some (edge, _) := root.children.find? fun (edge, _) =>
+      edge.tacticStr == "exact Nat.succ_eq_add_one 0"
+      | throwError "expected used-premise tactic edge"
+    unless edge.used_premise.contains `Nat.succ_eq_add_one do
+      throwError "expected Nat.succ_eq_add_one in used_premise, got {edge.used_premise}"
+  exact Nat.succ_eq_add_one 0
+
+example (h : 0 + 1 = 1) : Nat.succ 0 = 1 := by
+  run_tac do
+    let saved ← saveState
+    let (_, nodes) ← runMCTSForTest complexUsedPremiseTacGen (maxNodes := 8) (maxSteps := 8)
+    saved.restore
+    let some root := nodes[0]? | unreachable!
+    let some (edge, _) := root.children.find? fun (edge, _) =>
+      edge.tacticStr == "exact Eq.trans (Nat.succ_eq_add_one 0) h"
+      | throwError "expected complex used-premise tactic edge"
+    unless edge.used_premise.contains `Eq.trans do
+      throwError "expected Eq.trans in used_premise, got {edge.used_premise}"
+    unless edge.used_premise.contains `Nat.succ_eq_add_one do
+      throwError "expected Nat.succ_eq_add_one in used_premise, got {edge.used_premise}"
+    if edge.used_premise.contains `h then
+      throwError "expected local hypothesis h to be excluded, got {edge.used_premise}"
+  exact Eq.trans (Nat.succ_eq_add_one 0) h
+
+example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
+  run_tac do
+    let saved ← saveState
+    let (_, nodes) ← runMCTSForTest andOrTacGen (maxNodes := 32) (maxSteps := 32)
+    saved.restore
+    let mut sawFocus := false
+    let mut hPEdge? : Option MCTS.EdgeData := none
+    for node in nodes do
+      for (edge, _) in node.children do
+        if edge.isFocus then
+          sawFocus := true
+          unless edge.used_premise.isEmpty do
+            throwError "expected focus edge used_premise to be empty, got {edge.used_premise}"
+        if edge.tacticStr == "exact hP" then
+          hPEdge? := some edge
+    unless sawFocus do
+      throwError "expected focus edges in AND-node rollout"
+    let some hPEdge := hPEdge? | throwError "expected exact hP edge"
+    unless hPEdge.used_premise.isEmpty do
+      throwError "expected local hypothesis hP to be excluded, got {hPEdge.used_premise}"
+  constructor
+  · exact hP
+  · exact hQ
 
 example (a b c : Nat) (h1 : a = b) (h2 : b = c) : a = c := by
   run_tac reapMCTS transTacGen andOrStateEval (maxNodes := 32) (maxSteps := 32)
