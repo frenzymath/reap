@@ -59,7 +59,7 @@ register_option reap.heartbeats : Nat := {
 }
 
 register_option reap.timeout : Nat := {
-  defValue := 5000
+  defValue := 200000
   descr := "Timeout in milliseconds per tactic"
 }
 
