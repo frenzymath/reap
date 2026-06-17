@@ -234,7 +234,7 @@ def withTimeout {α : Type} (timeout : Nat) (act : TacticM α) : TacticM (Option
   let (cancel, task) ← TacticM.asTask act
   while (← IO.monoMsNow) <= deadline do
     if ← IO.hasFinished task then return some (← task.get)
-    IO.sleep 1000
+    IO.sleep 1
   cancel
   return none
 
