@@ -61,8 +61,7 @@ def unifyTypes (t₁ t₂ : Array Expr) : TacticM Bool := do
       break
   return ret
 
-abbrev TacGen := List MVarId → MetaM (Array (String × Array PremiseSelectionResult × Float))
-abbrev StateEval := List MVarId → MetaM Float
+abbrev PolicyValueEval := List MVarId → MetaM (Float × Array (String × Array PremiseSelectionResult × Float))
 
 structure SearchHyperparameters where
   cBase : Float
@@ -207,7 +206,7 @@ def updateDuplicateChild (nodeIdx childPos : Nat) (childData : NodeData) : Searc
 def mergeNames (xs ys : Array Name) : Array Name :=
   ys.foldl (fun xs y => if xs.contains y then xs else xs.push y) xs
 
-def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
+def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
     (ancestorKeys : Std.HashSet StateKey)
     (nodeIdx : Nat) (node : NodeType) : SearchM Float := do
   if node.data.toPlay == .andNode then
@@ -218,10 +217,10 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
 
   node.data.state.restore
   let g ← getUnsolvedGoals
-  let p' ← if g.isEmpty then
-    pure 0.0
+  let (p', tactics) ← if g.isEmpty then
+    pure (0.0, #[])
   else
-    se g
+    evalPolicyValue g
   let data' := {
     node.data with
       valueSum := node.data.valueSum + p'
@@ -230,7 +229,6 @@ def visitNode (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
   }
   modifyAtT nodeIdx fun node => { node with data := data' }
 
-  let tactics ← tg g
   let opts ← getOptions
   let heartbeats := reap.heartbeats.get opts
   let priorTemperature := reap.prior_temperature.get opts |>.toFloat
@@ -389,18 +387,18 @@ def updateNode (node : NodeType) (value : Float) : NodeData :=
       valueSum := node.data.valueSum + value
   }
 
-unsafe def reapMCTSStep (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
+unsafe def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
     (params : SearchHyperparameters) (ancestorKeys : Std.HashSet StateKey)
     (nodeIdx : Nat) : SearchM Float := do
   let x ← getNode! nodeIdx
   let node ← resolve x
   match selectChild params node with
   | none =>
-      visitNode ctx tg se ancestorKeys nodeIdx node
+      visitNode ctx evalPolicyValue ancestorKeys nodeIdx node
   | some childPos =>
       let (_, childIdx) := x.children[childPos]'lcProof
       let childRef ← getNode! childIdx
-      let childValue ← reapMCTSStep ctx tg se params (ancestorKeys.insert childRef.data.key) childIdx
+      let childValue ← reapMCTSStep ctx evalPolicyValue params (ancestorKeys.insert childRef.data.key) childIdx
       let x ← getNode! nodeIdx
       let (edge, _) := x.children[childPos]'lcProof
       let value := childValue - edgeStepCost edge
@@ -413,14 +411,14 @@ unsafe def reapMCTSStep (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
       let node ← resolve (← getNode! nodeIdx)
       return backupValueForParent node value
 
-unsafe def monteCarloTreeSearch (ctx : ProofCheckContext) (tg : TacGen) (se : StateEval)
+unsafe def monteCarloTreeSearch (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
     (params : SearchHyperparameters) (start : NodeData)
     (maxNodes := MCTS.defaultMaxNodes) (maxSteps := MCTS.defaultMaxSteps) :
     TacticM (Option Nat × Array (Node NodeData (EdgeData × Nat))) :=
   StateT.run (s := #[ { data := start } ]) do
     let mut step := 0
     while (← get).size <= maxNodes && step < maxSteps do
-      discard <| reapMCTSStep ctx tg se params {start.key} 0
+      discard <| reapMCTSStep ctx evalPolicyValue params {start.key} 0
       let root ← getNode! 0
       if root.data.isSolved then
         return some 0
@@ -457,7 +455,7 @@ partial def replaySolvedNode (ctx : ProofCheckContext) (heartbeats : Nat)
 end MCTS
 
 open MCTS in
-def reapMCTS (tg : TacGen) (se : StateEval)
+def reapMCTS (evalPolicyValue : PolicyValueEval)
     (maxNodes := MCTS.defaultMaxNodes)
     (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := unsafe do
   let opts ← getOptions
@@ -466,7 +464,7 @@ def reapMCTS (tg : TacGen) (se : StateEval)
     openLogFile <| .mk path
   let ctx ← mkProofCheckContext
   let params := SearchHyperparameters.fromOptions opts
-  let (k, nodes) ← monteCarloTreeSearch ctx tg se params (← NodeData.fromState) maxNodes maxSteps
+  let (k, nodes) ← monteCarloTreeSearch ctx evalPolicyValue params (← NodeData.fromState) maxNodes maxSteps
 
   let ppNodes ← nodes.mapM (ppNode params nodes)
   let info := json%{

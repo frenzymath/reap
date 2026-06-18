@@ -6,35 +6,32 @@ open TreeSearch
 
 set_option linter.unusedSimpArgs false
 
-def andOrTacGen : TacGen := fun _ => do
-  return #[
+def andOrPolicyValue : PolicyValueEval := fun _ => do
+  return (0.0, #[
     ("constructor", #[], 1.0),
     ("exact hP", #[], 1.0),
     ("exact hQ", #[], 1.0)
-  ]
+  ])
 
-def andOrStateEval : StateEval := fun _ => do
-  return 0.0
-
-def transTacGen : TacGen := fun _ => do
-  return #[
+def transPolicyValue : PolicyValueEval := fun _ => do
+  return (0.0, #[
     ("trans b", #[], 1.0),
     ("exact h1", #[], 1.0),
     ("exact h2", #[], 1.0)
-  ]
+  ])
 
-def existsTacGen : TacGen := fun _ => do
-  return #[
+def existsPolicyValue : PolicyValueEval := fun _ => do
+  return (0.0, #[
     ("constructor", #[], 1.0),
     ("exact 0", #[], 1.0),
     ("rfl", #[], 1.0)
-  ]
+  ])
 
-def selfLoopTacGen : TacGen := fun _ => do
-  return #[
+def selfLoopPolicyValue : PolicyValueEval := fun _ => do
+  return (0.0, #[
     ("skip", #[], 1.0),
     ("trivial", #[], 1.0)
-  ]
+  ])
 
 def hasLocalDeclNamed (goals : List MVarId) (name : Name) : MetaM Bool := do
   let some goal := goals.head? | return false
@@ -44,43 +41,43 @@ def hasLocalDeclNamed (goals : List MVarId) (name : Name) : MetaM Bool := do
         return true
     return false
 
-def ancestorLoopTacGen : TacGen := fun goals => do
+def ancestorLoopPolicyValue : PolicyValueEval := fun goals => do
   if ← hasLocalDeclNamed goals `h then
-    return #[
+    return (0.0, #[
       ("clear h", #[], 1.0),
       ("exact True.intro", #[], 1.0)
-    ]
+    ])
   else
-    return #[
+    return (0.0, #[
       ("have h : True := by trivial", #[], 1.0),
       ("have h : True := by trivial", #[], 1.0)
-    ]
+    ])
 
-def deferredHaveTacGen (unfocusedVisits : IO.Ref Nat) : TacGen := fun goals => do
+def deferredHavePolicyValue (unfocusedVisits : IO.Ref Nat) : PolicyValueEval := fun goals => do
   if ← hasLocalDeclNamed goals `h then
-    return #[("exact h", #[], 1.0)]
+    return (0.0, #[("exact h", #[], 1.0)])
   let visits ← unfocusedVisits.get
   unfocusedVisits.set (visits + 1)
   if visits == 0 then
-    return #[("have h : P := ?_", #[], 1.0)]
+    return (0.0, #[("have h : P := ?_", #[], 1.0)])
   else
-    return #[("exact hP", #[], 1.0)]
+    return (0.0, #[("exact hP", #[], 1.0)])
 
-def usedPremiseTacGen : TacGen := fun _ => do
-  return #[
+def usedPremisePolicyValue : PolicyValueEval := fun _ => do
+  return (0.0, #[
     ("exact Nat.succ_eq_add_one 0", #[], 1.0)
-  ]
+  ])
 
-def complexUsedPremiseTacGen : TacGen := fun _ => do
-  return #[
+def complexUsedPremisePolicyValue : PolicyValueEval := fun _ => do
+  return (0.0, #[
     ("exact Eq.trans (Nat.succ_eq_add_one 0) h", #[], 1.0)
-  ]
+  ])
 
-def runMCTSForTest (tg : TacGen) (maxNodes := 32) (maxSteps := 32) :
+def runMCTSForTest (evalPolicyValue : PolicyValueEval) (maxNodes := 32) (maxSteps := 32) :
     TacticM (Option Nat × Array (Node MCTS.NodeData (MCTS.EdgeData × Nat))) := unsafe do
   let ctx ← mkProofCheckContext
   let params := SearchHyperparameters.fromOptions (← getOptions)
-  MCTS.monteCarloTreeSearch ctx tg andOrStateEval params (← MCTS.NodeData.fromState) maxNodes maxSteps
+  MCTS.monteCarloTreeSearch ctx evalPolicyValue params (← MCTS.NodeData.fromState) maxNodes maxSteps
 
 def childTacticStrings (node : Node MCTS.NodeData (MCTS.EdgeData × Nat)) : Array String :=
   node.children.map fun (edge, _) => edge.tacticStr
@@ -105,7 +102,7 @@ example : ∃ n : Nat, n = n := by
 
 example : True := by
   run_tac do
-    let (_, nodes) ← runMCTSForTest selfLoopTacGen (maxNodes := 8) (maxSteps := 8)
+    let (_, nodes) ← runMCTSForTest selfLoopPolicyValue (maxNodes := 8) (maxSteps := 8)
     let some root := nodes[0]? | unreachable!
     let tactics := childTacticStrings root
     if tactics.contains "skip" then
@@ -115,7 +112,7 @@ example : True := by
 
 example : True := by
   run_tac do
-    let (_, nodes) ← runMCTSForTest ancestorLoopTacGen (maxNodes := 8) (maxSteps := 8)
+    let (_, nodes) ← runMCTSForTest ancestorLoopPolicyValue (maxNodes := 8) (maxSteps := 8)
     let some root := nodes[0]? | unreachable!
     unless root.children.size == 1 do
       throwError "expected duplicate non-loop child states to merge"
@@ -135,19 +132,19 @@ example (P : Prop) (hP : P) : P := by
   run_tac do
     let saved ← saveState
     let unfocusedVisits ← IO.mkRef 0
-    let (some _, nodes) ← runMCTSForTest (deferredHaveTacGen unfocusedVisits)
+    let (some _, nodes) ← runMCTSForTest (deferredHavePolicyValue unfocusedVisits)
         (maxNodes := 32) (maxSteps := 32)
       | throwError "expected MCTS to solve deferred have proof"
     unless nodes.any (fun node => node.children.any fun (edge, _) => edge.tacticStr == "exact h") do
       throwError "expected MCTS to accept delayed final-check child tactic"
     saved.restore
     let replayVisits ← IO.mkRef 0
-    reapMCTS (deferredHaveTacGen replayVisits) andOrStateEval (maxNodes := 32) (maxSteps := 32)
+    reapMCTS (deferredHavePolicyValue replayVisits) (maxNodes := 32) (maxSteps := 32)
 
 example : Nat.succ 0 = 0 + 1 := by
   run_tac do
     let saved ← saveState
-    let (_, nodes) ← runMCTSForTest usedPremiseTacGen (maxNodes := 8) (maxSteps := 8)
+    let (_, nodes) ← runMCTSForTest usedPremisePolicyValue (maxNodes := 8) (maxSteps := 8)
     saved.restore
     let some root := nodes[0]? | unreachable!
     let some (edge, _) := root.children.find? fun (edge, _) =>
@@ -160,7 +157,7 @@ example : Nat.succ 0 = 0 + 1 := by
 example (h : 0 + 1 = 1) : Nat.succ 0 = 1 := by
   run_tac do
     let saved ← saveState
-    let (_, nodes) ← runMCTSForTest complexUsedPremiseTacGen (maxNodes := 8) (maxSteps := 8)
+    let (_, nodes) ← runMCTSForTest complexUsedPremisePolicyValue (maxNodes := 8) (maxSteps := 8)
     saved.restore
     let some root := nodes[0]? | unreachable!
     let some (edge, _) := root.children.find? fun (edge, _) =>
@@ -177,7 +174,7 @@ example (h : 0 + 1 = 1) : Nat.succ 0 = 1 := by
 example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
   run_tac do
     let saved ← saveState
-    let (_, nodes) ← runMCTSForTest andOrTacGen (maxNodes := 32) (maxSteps := 32)
+    let (_, nodes) ← runMCTSForTest andOrPolicyValue (maxNodes := 32) (maxSteps := 32)
     saved.restore
     let mut sawFocus := false
     let mut hPEdge? : Option MCTS.EdgeData := none
@@ -199,10 +196,10 @@ example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
   · exact hQ
 
 example (a b c : Nat) (h1 : a = b) (h2 : b = c) : a = c := by
-  run_tac reapMCTS transTacGen andOrStateEval (maxNodes := 32) (maxSteps := 32)
+  run_tac reapMCTS transPolicyValue (maxNodes := 32) (maxSteps := 32)
 
 example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
-  run_tac reapMCTS andOrTacGen andOrStateEval (maxNodes := 32) (maxSteps := 32)
+  run_tac reapMCTS andOrPolicyValue (maxNodes := 32) (maxSteps := 32)
 
 example : ∃ n : Nat, n = n := by
-  run_tac reapMCTS existsTacGen andOrStateEval (maxNodes := 32) (maxSteps := 32)
+  run_tac reapMCTS existsPolicyValue (maxNodes := 32) (maxSteps := 32)
