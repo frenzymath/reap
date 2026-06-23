@@ -100,6 +100,17 @@ theorem evalTacticStr_accepts_recursive_with_section_var (n : Nat) : x = x := by
 
 end
 
+section
+
+universe u v
+
+variable (G : Type u) (H : Type v)
+
+theorem evalTacticStr_accepts_unused_universe_section_vars : True := by
+  guardEvalAccepts "trivial"
+
+end
+
 theorem evalTacticStr_rejects_self_reference : False := by
   guardEvalRejects "exact evalTacticStr_rejects_self_reference"
   sorry

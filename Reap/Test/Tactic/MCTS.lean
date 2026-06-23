@@ -56,6 +56,16 @@ def ancestorLoopTacGen : TacGen := fun goals => do
       ("have h : True := by trivial", #[], 1.0)
     ]
 
+def deferredHaveTacGen (unfocusedVisits : IO.Ref Nat) : TacGen := fun goals => do
+  if ← hasLocalDeclNamed goals `h then
+    return #[("exact h", #[], 1.0)]
+  let visits ← unfocusedVisits.get
+  unfocusedVisits.set (visits + 1)
+  if visits == 0 then
+    return #[("have h : P := ?_", #[], 1.0)]
+  else
+    return #[("exact hP", #[], 1.0)]
+
 def usedPremiseTacGen : TacGen := fun _ => do
   return #[
     ("exact Nat.succ_eq_add_one 0", #[], 1.0)
@@ -120,6 +130,19 @@ example : True := by
       throwError "expected depth ancestor-loop tactic to be dropped"
     unless tactics.contains "exact True.intro" do
       throwError "expected non-loop child solving tactic to remain"
+
+example (P : Prop) (hP : P) : P := by
+  run_tac do
+    let saved ← saveState
+    let unfocusedVisits ← IO.mkRef 0
+    let (some _, nodes) ← runMCTSForTest (deferredHaveTacGen unfocusedVisits)
+        (maxNodes := 32) (maxSteps := 32)
+      | throwError "expected MCTS to solve deferred have proof"
+    unless nodes.any (fun node => node.children.any fun (edge, _) => edge.tacticStr == "exact h") do
+      throwError "expected MCTS to accept delayed final-check child tactic"
+    saved.restore
+    let replayVisits ← IO.mkRef 0
+    reapMCTS (deferredHaveTacGen replayVisits) andOrStateEval (maxNodes := 32) (maxSteps := 32)
 
 example : Nat.succ 0 = 0 + 1 := by
   run_tac do

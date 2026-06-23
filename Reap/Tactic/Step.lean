@@ -127,9 +127,11 @@ def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option Pre
     if type.hasExprMVar then
       return none
     let declName ← mkFreshUserName `_step_check
+    let checkedType ← mkForallFVars xs type
+    let checkedValue ← mkLambdaFVars xs value
     let (_, levelParamState) := StateT.run (m := Id) (s := { : CollectLevelParams.State}) do
-      modify (·.collect type)
-      modify (·.collect value)
+      modify (·.collect checkedType)
+      modify (·.collect checkedValue)
     let levelParams := levelParamState.params.toList
     let auxNames := collectAuxDeclNames lctx value
     let some value := (
@@ -138,7 +140,7 @@ def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option Pre
       | #[auxName] => some <| replaceAuxDeclFVars lctx auxName declName levelParams sectionVars value
       | _ => none
     ) | return none
-    let type ← mkForallFVars xs type
+    let type := checkedType
     let value ← mkLambdaFVars xs value
     return some {
       ref := .missing
