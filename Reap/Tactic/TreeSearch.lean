@@ -141,6 +141,7 @@ end NodeData
 structure EdgeData where
   tacticStr : String
   premise : Array PremiseSelectionResult
+  used_premise : Array Name := #[]
   probability : Float
   value : Float
   numVisit : Nat := 0
@@ -202,6 +203,9 @@ def updateDuplicateChild (nodeIdx childPos : Nat) (childData : NodeData) : Searc
     let childRef ← getNode! childIdx
     setAtT childIdx { childRef with data := { childRef.data with isSolved := childRef.data.isSolved || childData.isSolved } }
 
+def mergeNames (xs ys : Array Name) : Array Name :=
+  ys.foldl (fun xs y => if xs.contains y then xs else xs.push y) xs
+
 def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
     (ancestorKeys : Std.HashSet StateKey)
     (nodeIdx : Nat) (node : NodeType) : SearchM Float := do
@@ -230,8 +234,16 @@ def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
   let priorTemperature := reap.prior_temperature.get opts |>.toFloat
   for (t, ps, prior) in tactics do
     node.data.state.restore
-    let result ← evalTacticStr (node.data.proofCheckContext ctx) t heartbeats
-    if result.isOk then
+    let result ←
+      match node.data.partialGoal with
+      | some _ =>
+          -- A focused AND-child may close a goal using declarations whose
+          -- proof obligations are sibling AND-children. The whole replay is
+          -- final-checked after every child is solved.
+          evalTacticStrNoFinalCheck (node.data.proofCheckContext ctx) t heartbeats
+      | none =>
+          evalTacticStr (node.data.proofCheckContext ctx) t heartbeats
+    if let .ok usedPremise := result then
       let probability := (prior / priorTemperature).exp
       let childKind ← childKindAfterTactic
       let childData ← NodeData.fromState childKind node.data.partialGoal
@@ -239,7 +251,11 @@ def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
         let parentRef ← getNode! nodeIdx
         let parent ← resolve parentRef
         if let some ((e, c), childPos) := parent.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == childData.key then
-          let e' := { e with probability := e.probability + probability }
+          let e' := {
+            e with
+              used_premise := mergeNames e.used_premise usedPremise
+              probability := e.probability + probability
+          }
           updateDuplicateChild nodeIdx childPos childData
           modifyAtT nodeIdx fun node => {
             node with
@@ -250,6 +266,7 @@ def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
           let childIdx ← pushChildT nodeIdx {
             tacticStr := t
             premise := ps
+            used_premise := usedPremise
             probability
             value := 0.0
           } childData

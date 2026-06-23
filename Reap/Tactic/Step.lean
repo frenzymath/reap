@@ -103,9 +103,9 @@ instance : ToString EvalError where
 
 abbrev EvalResult α := Except EvalError α
 
-instance : ToJson (EvalResult Unit) where
+instance [ToJson α] : ToJson (EvalResult α) where
   toJson
-  | .ok _ => json%{ "ok": null }
+  | .ok x => json%{ "ok": $x }
   | .error e => json% { "error": $e }
 
 def withCatchRuntime {α : Type} (act : TacticM (EvalResult α)) : TacticM (EvalResult α) := do
@@ -127,9 +127,11 @@ def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option Pre
     if type.hasExprMVar then
       return none
     let declName ← mkFreshUserName `_step_check
+    let checkedType ← mkForallFVars xs type
+    let checkedValue ← mkLambdaFVars xs value
     let (_, levelParamState) := StateT.run (m := Id) (s := { : CollectLevelParams.State}) do
-      modify (·.collect type)
-      modify (·.collect value)
+      modify (·.collect checkedType)
+      modify (·.collect checkedValue)
     let levelParams := levelParamState.params.toList
     let auxNames := collectAuxDeclNames lctx value
     let some value := (
@@ -138,7 +140,7 @@ def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option Pre
       | #[auxName] => some <| replaceAuxDeclFVars lctx auxName declName levelParams sectionVars value
       | _ => none
     ) | return none
-    let type ← mkForallFVars xs type
+    let type := checkedType
     let value ← mkLambdaFVars xs value
     return some {
       ref := .missing
@@ -219,6 +221,41 @@ partial def findQuestionTacticKind (stx : Syntax) : Option SyntaxNodeKind :=
         args.findSome? findQuestionTacticKind
   | _ => none
 
+partial def collectIdentSyntaxes (stx : Syntax) (idents : Array Syntax := #[]) : Array Syntax :=
+  match stx with
+  | .ident .. => idents.push stx
+  | .node _ _ args => args.foldl (fun idents stx => collectIdentSyntaxes stx idents) idents
+  | _ => idents
+
+def syntaxIdentName? : Syntax → Option Name
+  | .ident _ _ name _ => some name.eraseMacroScopes
+  | _ => none
+
+def isLocalUserName (name : Name) : TacticM Bool := do
+  for localDecl in ← getLCtx do
+    if localDecl.userName == name then
+      return true
+  return false
+
+def resolveExplicitConstName? (stx : Syntax) : TacticM (Option Name) := do
+  let some rawName := syntaxIdentName? stx | return none
+  if ← isLocalUserName rawName then
+    return none
+  try
+    return some (← realizeGlobalConstNoOverloadWithInfo stx)
+  catch _ =>
+    if (← getEnv).contains rawName then
+      return some rawName
+    return none
+
+def collectExplicitConstNames (stx : Syntax) : TacticM (Array Name) := do
+  let mut names := #[]
+  for ident in collectIdentSyntaxes stx do
+    if let some name ← resolveExplicitConstName? ident then
+      unless names.contains name do
+        names := names.push name
+  return names
+
 def parseTacticStr (str : String) : TacticM (EvalResult Syntax) := do
   match Parser.runParserCategory (← getEnv) `tactic str with
   | .ok stx => return .ok stx
@@ -253,7 +290,7 @@ def checkMessages (messages : List Message) : TacticM (EvalResult Unit) := do
     return .error (.tacticErrorMessages (← messages.filterMapM fun x => if x.severity != .information then x.serialize else return none))
   return .ok ()
 
-def evalTacticStrCore (str : String) (heartbeats : Nat) (checkCtx? : Option ProofCheckContext) : TacticM (EvalResult Unit) := do
+def evalTacticStrCore (str : String) (heartbeats : Nat) (checkCtx? : Option ProofCheckContext) : TacticM (EvalResult (Array Name)) := do
   let state := toString <| ← TacticGenerator.Meta.ppProofState (← getGoals)
   appendLogRecord (json%{
     name: "tactic_eval_pre",
@@ -263,17 +300,19 @@ def evalTacticStrCore (str : String) (heartbeats : Nat) (checkCtx? : Option Proo
   withLogWallClockTime "tactic_eval" (fun result => json%{ state: $state, tactic: $str, result: $result }) <| ExceptT.run do
     let stx ← parseTacticStr str
     checkTacticSyntax stx
+    let usedPremise ← collectExplicitConstNames stx
     let messages ← runTacticSyntax stx heartbeats (reap.timeout.get (← getOptions))
     checkMessages messages
     if (← getGoals).isEmpty then
       match checkCtx? with
       | some checkCtx => checkProof checkCtx
       | none => pure ()
+    return usedPremise
 
-def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult Unit) :=
+def evalTacticStr (ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult (Array Name)) :=
   evalTacticStrCore str heartbeats (some ctx)
 
-def evalTacticStrNoFinalCheck (_ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult Unit) :=
+def evalTacticStrNoFinalCheck (_ctx : ProofCheckContext) (str : String) (heartbeats : Nat) : TacticM (EvalResult (Array Name)) :=
   evalTacticStrCore str heartbeats none
 
 end Reap.TreeSearch

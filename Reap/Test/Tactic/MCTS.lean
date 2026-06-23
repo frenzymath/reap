@@ -53,6 +53,26 @@ def ancestorLoopPolicyValue : PolicyValueEval := fun goals => do
       ("have h : True := by trivial", #[], 1.0)
     ])
 
+def deferredHavePolicyValue (unfocusedVisits : IO.Ref Nat) : PolicyValueEval := fun goals => do
+  if ← hasLocalDeclNamed goals `h then
+    return (0.0, #[("exact h", #[], 1.0)])
+  let visits ← unfocusedVisits.get
+  unfocusedVisits.set (visits + 1)
+  if visits == 0 then
+    return (0.0, #[("have h : P := ?_", #[], 1.0)])
+  else
+    return (0.0, #[("exact hP", #[], 1.0)])
+
+def usedPremisePolicyValue : PolicyValueEval := fun _ => do
+  return (0.0, #[
+    ("exact Nat.succ_eq_add_one 0", #[], 1.0)
+  ])
+
+def complexUsedPremisePolicyValue : PolicyValueEval := fun _ => do
+  return (0.0, #[
+    ("exact Eq.trans (Nat.succ_eq_add_one 0) h", #[], 1.0)
+  ])
+
 def runMCTSForTest (evalPolicyValue : PolicyValueEval) (maxNodes := 32) (maxSteps := 32) :
     TacticM (Option Nat × Array (Node MCTS.NodeData (MCTS.EdgeData × Nat))) := unsafe do
   let ctx ← mkProofCheckContext
@@ -107,6 +127,73 @@ example : True := by
       throwError "expected depth ancestor-loop tactic to be dropped"
     unless tactics.contains "exact True.intro" do
       throwError "expected non-loop child solving tactic to remain"
+
+example (P : Prop) (hP : P) : P := by
+  run_tac do
+    let saved ← saveState
+    let unfocusedVisits ← IO.mkRef 0
+    let (some _, nodes) ← runMCTSForTest (deferredHavePolicyValue unfocusedVisits)
+        (maxNodes := 32) (maxSteps := 32)
+      | throwError "expected MCTS to solve deferred have proof"
+    unless nodes.any (fun node => node.children.any fun (edge, _) => edge.tacticStr == "exact h") do
+      throwError "expected MCTS to accept delayed final-check child tactic"
+    saved.restore
+    let replayVisits ← IO.mkRef 0
+    reapMCTS (deferredHavePolicyValue replayVisits) (maxNodes := 32) (maxSteps := 32)
+
+example : Nat.succ 0 = 0 + 1 := by
+  run_tac do
+    let saved ← saveState
+    let (_, nodes) ← runMCTSForTest usedPremisePolicyValue (maxNodes := 8) (maxSteps := 8)
+    saved.restore
+    let some root := nodes[0]? | unreachable!
+    let some (edge, _) := root.children.find? fun (edge, _) =>
+      edge.tacticStr == "exact Nat.succ_eq_add_one 0"
+      | throwError "expected used-premise tactic edge"
+    unless edge.used_premise.contains `Nat.succ_eq_add_one do
+      throwError "expected Nat.succ_eq_add_one in used_premise, got {edge.used_premise}"
+  exact Nat.succ_eq_add_one 0
+
+example (h : 0 + 1 = 1) : Nat.succ 0 = 1 := by
+  run_tac do
+    let saved ← saveState
+    let (_, nodes) ← runMCTSForTest complexUsedPremisePolicyValue (maxNodes := 8) (maxSteps := 8)
+    saved.restore
+    let some root := nodes[0]? | unreachable!
+    let some (edge, _) := root.children.find? fun (edge, _) =>
+      edge.tacticStr == "exact Eq.trans (Nat.succ_eq_add_one 0) h"
+      | throwError "expected complex used-premise tactic edge"
+    unless edge.used_premise.contains `Eq.trans do
+      throwError "expected Eq.trans in used_premise, got {edge.used_premise}"
+    unless edge.used_premise.contains `Nat.succ_eq_add_one do
+      throwError "expected Nat.succ_eq_add_one in used_premise, got {edge.used_premise}"
+    if edge.used_premise.contains `h then
+      throwError "expected local hypothesis h to be excluded, got {edge.used_premise}"
+  exact Eq.trans (Nat.succ_eq_add_one 0) h
+
+example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
+  run_tac do
+    let saved ← saveState
+    let (_, nodes) ← runMCTSForTest andOrPolicyValue (maxNodes := 32) (maxSteps := 32)
+    saved.restore
+    let mut sawFocus := false
+    let mut hPEdge? : Option MCTS.EdgeData := none
+    for node in nodes do
+      for (edge, _) in node.children do
+        if edge.isFocus then
+          sawFocus := true
+          unless edge.used_premise.isEmpty do
+            throwError "expected focus edge used_premise to be empty, got {edge.used_premise}"
+        if edge.tacticStr == "exact hP" then
+          hPEdge? := some edge
+    unless sawFocus do
+      throwError "expected focus edges in AND-node rollout"
+    let some hPEdge := hPEdge? | throwError "expected exact hP edge"
+    unless hPEdge.used_premise.isEmpty do
+      throwError "expected local hypothesis hP to be excluded, got {hPEdge.used_premise}"
+  constructor
+  · exact hP
+  · exact hQ
 
 example (a b c : Nat) (h1 : a = b) (h2 : b = c) : a = c := by
   run_tac reapMCTS transPolicyValue (maxNodes := 32) (maxSteps := 32)
