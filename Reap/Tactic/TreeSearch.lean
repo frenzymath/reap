@@ -230,7 +230,15 @@ def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
   let priorTemperature := reap.prior_temperature.get opts |>.toFloat
   for (t, ps, prior) in tactics do
     node.data.state.restore
-    let result ← evalTacticStr (node.data.proofCheckContext ctx) t heartbeats
+    let result ←
+      match node.data.partialGoal with
+      | some _ =>
+          -- A focused AND-child may close a goal using declarations whose
+          -- proof obligations are sibling AND-children. The whole replay is
+          -- final-checked after every child is solved.
+          evalTacticStrNoFinalCheck (node.data.proofCheckContext ctx) t heartbeats
+      | none =>
+          evalTacticStr (node.data.proofCheckContext ctx) t heartbeats
     if result.isOk then
       let probability := (prior / priorTemperature).exp
       let childKind ← childKindAfterTactic
