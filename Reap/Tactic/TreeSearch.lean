@@ -63,6 +63,33 @@ def unifyTypes (t₁ t₂ : Array Expr) : TacticM Bool := do
 
 abbrev PolicyValueEval := List MVarId → MetaM (Float × Array (String × Array PremiseSelectionResult × Float))
 
+structure MCTSProgress where
+  visitedNodes : Nat
+  maxNodes : Nat
+  step : Nat
+  maxSteps : Nat
+  goalType : String
+  done : Bool
+  solved : Bool
+  status : String
+deriving Inhabited
+
+abbrev ProgressReporter := MCTSProgress → TacticM Unit
+
+namespace MCTSProgress
+
+def initial (maxNodes maxSteps : Nat) : MCTSProgress where
+  visitedNodes := 0
+  maxNodes := maxNodes
+  step := 0
+  maxSteps := maxSteps
+  goalType := "starting"
+  done := false
+  solved := false
+  status := "running"
+
+end MCTSProgress
+
 structure SearchHyperparameters where
   cBase : Float
   cInit : Float
@@ -157,6 +184,12 @@ def getNode! (nodeIdx : Nat) : SearchM (Node NodeData (EdgeData × Nat)) := do
   let nodes ← get
   let some node := nodes[nodeIdx]? | throwError "MCTS node index out of bounds: {nodeIdx}"
   return node
+
+def getChild! (node : Node NodeData (EdgeData × Nat)) (childPos : Nat) :
+    SearchM (EdgeData × Nat) := do
+  let some child := node.children[childPos]?
+    | throwError "MCTS child index out of bounds: requested {childPos}, node has {node.children.size} children"
+  return child
 
 def nodeSolved (node : NodeType) : Bool :=
   match node.data.toPlay with
@@ -326,7 +359,7 @@ def ppNodeData (node : NodeData) : TacticM Json := do
 def ppNode (params : SearchHyperparameters) (arr : Array (Node NodeData (EdgeData × Nat)))
     (node : Node NodeData (EdgeData × Nat)) : TacticM Json := do
   let children ← node.children.mapM fun (e, i) => do
-    let some x := arr[i]? | unreachable!
+    let some x := arr[i]? | throwError "MCTS node child index out of bounds while rendering raw tree: {i}"
     return (e, x.data)
   let scores := computePUCTScores params { data := node.data, children := children }
   let ppChildren := node.children.zip scores |>.map fun ((e, i), (score, cqu)) => json%{
@@ -387,20 +420,52 @@ def updateNode (node : NodeType) (value : Float) : NodeData :=
       valueSum := node.data.valueSum + value
   }
 
+def currentGoalType (node : NodeData) : TacticM String := do
+  node.state.restore
+  match ← getUnsolvedGoals with
+  | [] => return "no goals"
+  | goal :: _ =>
+      goal.withContext do
+        return toString (← Meta.ppExpr (← goal.getTypeCleanup))
+
+def reportProgress? (progress? : Option ProgressReporter) (step maxNodes maxSteps : Nat)
+    (goalType : String) (done solved : Bool) (status : String) : SearchM Unit := do
+  match progress? with
+  | none => return ()
+  | some progress =>
+      let nodes ← get
+      liftM <| progress {
+        visitedNodes := nodes.size
+        maxNodes
+        step
+        maxSteps
+        goalType
+        done
+        solved
+        status
+      }
+
 unsafe def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
     (params : SearchHyperparameters) (ancestorKeys : Std.HashSet StateKey)
-    (nodeIdx : Nat) : SearchM Float := do
+    (nodeIdx : Nat) (progress? : Option ProgressReporter := none)
+    (step := 0) (maxNodes := MCTS.defaultMaxNodes) (maxSteps := MCTS.defaultMaxSteps) :
+    SearchM Float := do
   let x ← getNode! nodeIdx
   let node ← resolve x
   match selectChild params node with
   | none =>
-      visitNode ctx evalPolicyValue ancestorKeys nodeIdx node
+      let goalType ← currentGoalType node.data
+      let value ← visitNode ctx evalPolicyValue ancestorKeys nodeIdx node
+      reportProgress? progress? step maxNodes maxSteps goalType false false "running"
+      return value
   | some childPos =>
-      let (_, childIdx) := x.children[childPos]'lcProof
+      let (_, childIdx) ← getChild! x childPos
       let childRef ← getNode! childIdx
-      let childValue ← reapMCTSStep ctx evalPolicyValue params (ancestorKeys.insert childRef.data.key) childIdx
+      let childValue ←
+        reapMCTSStep ctx evalPolicyValue params (ancestorKeys.insert childRef.data.key) childIdx
+          progress? step maxNodes maxSteps
       let x ← getNode! nodeIdx
-      let (edge, _) := x.children[childPos]'lcProof
+      let (edge, childIdx) ← getChild! x childPos
       let value := childValue - edgeStepCost edge
       let edge' := updateEdge edge value
       setAtT nodeIdx { x with children := x.children.set! childPos (edge', childIdx) }
@@ -413,17 +478,89 @@ unsafe def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValue
 
 unsafe def monteCarloTreeSearch (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
     (params : SearchHyperparameters) (start : NodeData)
-    (maxNodes := MCTS.defaultMaxNodes) (maxSteps := MCTS.defaultMaxSteps) :
+    (maxNodes := MCTS.defaultMaxNodes) (maxSteps := MCTS.defaultMaxSteps)
+    (progress? : Option ProgressReporter := none) :
     TacticM (Option Nat × Array (Node NodeData (EdgeData × Nat))) :=
   StateT.run (s := #[ { data := start } ]) do
     let mut step := 0
     while (← get).size <= maxNodes && step < maxSteps do
-      discard <| reapMCTSStep ctx evalPolicyValue params {start.key} 0
+      discard <| reapMCTSStep ctx evalPolicyValue params {start.key} 0 progress? step maxNodes maxSteps
       let root ← getNode! 0
       if root.data.isSolved then
+        reportProgress? progress? (step + 1) maxNodes maxSteps "no goals" true true "solved"
         return some 0
       step := step + 1
+    reportProgress? progress? step maxNodes maxSteps "search exhausted" true false "exhausted"
     return none
+
+def trimScript (script : String) : String :=
+  script.trimAscii.toString
+
+def appendScript (head tail : String) : String :=
+  let head := trimScript head
+  let tail := trimScript tail
+  if head.isEmpty then
+    tail
+  else if tail.isEmpty then
+    head
+  else
+    head ++ "\n" ++ tail
+
+def renderBullet (script : String) : String :=
+  let script := trimScript script
+  let script := if script.isEmpty then "skip" else script
+  match script.splitOn "\n" with
+  | [] => "· skip"
+  | first :: rest =>
+      String.intercalate "\n" (("· " ++ first) :: rest.map fun line => "  " ++ line)
+
+def indentScript (script : String) : String :=
+  String.intercalate "\n" <| (trimScript script).splitOn "\n" |>.map fun line => "  " ++ line
+
+def wrapProofScriptAsTactic (script : String) : String :=
+  "exact by\n" ++ indentScript script
+
+def childIsSolved (nodes : Array (Node NodeData (EdgeData × Nat))) (childIdx : Nat) : Bool :=
+  (nodes[childIdx]?.map fun child => child.data.isSolved).getD false
+
+def solvedOrChild? (nodes : Array (Node NodeData (EdgeData × Nat)))
+    (node : Node NodeData (EdgeData × Nat)) : Option (EdgeData × Nat) :=
+  node.children.find? fun (edge, childIdx) =>
+    !edge.isFocus && childIsSolved nodes childIdx
+
+def focusChildren
+    (node : Node NodeData (EdgeData × Nat)) : Array (EdgeData × Nat) :=
+  node.children.filter (fun (edge, _) => edge.isFocus)
+  |>.qsort fun a b => a.1.focusIndex < b.1.focusIndex
+
+def solvedFocusChildren (nodes : Array (Node NodeData (EdgeData × Nat)))
+    (node : Node NodeData (EdgeData × Nat)) : Array (EdgeData × Nat) :=
+  focusChildren node |>.filter fun (_, childIdx) => childIsSolved nodes childIdx
+
+partial def proofScriptForSolvedNode
+    (nodes : Array (Node NodeData (EdgeData × Nat))) (nodeIdx : Nat) : Except String String := do
+  let some node := nodes[nodeIdx]? | throw s!"MCTS proof script node index out of bounds: {nodeIdx}"
+  match node.data.toPlay with
+  | .orNode =>
+      match solvedOrChild? nodes node with
+      | some (edge, childIdx) =>
+          return appendScript edge.tacticStr (← proofScriptForSolvedNode nodes childIdx)
+      | none =>
+          if node.data.isSolved then
+            return ""
+          else
+            throw s!"MCTS proof script could not find a solved OR child at node {nodeIdx}"
+  | .andNode =>
+      let focusChildren := solvedFocusChildren nodes node
+      if focusChildren.isEmpty then
+        if node.data.isSolved then
+          return ""
+        else
+          throw s!"MCTS proof script could not find solved focus children at node {nodeIdx}"
+      let mut bullets := #[]
+      for (_, childIdx) in focusChildren do
+        bullets := bullets.push (renderBullet (← proofScriptForSolvedNode nodes childIdx))
+      return String.intercalate "\n" bullets.toList
 
 partial def replaySolvedNode (ctx : ProofCheckContext) (heartbeats : Nat)
     (nodes : Array (Node NodeData (EdgeData × Nat))) (nodeIdx : Nat) : TacticM Unit := do
@@ -432,39 +569,45 @@ partial def replaySolvedNode (ctx : ProofCheckContext) (heartbeats : Nat)
   | .orNode =>
       if (← getUnsolvedGoals).isEmpty then
         return ()
-      let some (edge, childIdx) := node.children.find? fun (edge, childIdx) =>
-        !edge.isFocus && (nodes[childIdx]?.map fun child => child.data.isSolved).getD false
+      let some (edge, childIdx) := solvedOrChild? nodes node
         | throwError "MCTS proof replay could not find a solved OR child"
       match ← evalTacticStrNoFinalCheck ctx edge.tacticStr heartbeats with
       | .ok _ => replaySolvedNode ctx heartbeats nodes childIdx
       | .error err => throwError "MCTS proof replay failed on tactic {edge.tacticStr}: {(toJson err).compress}"
   | .andNode =>
       let goals := (← getUnsolvedGoals).toArray
-      for (edge, childIdx) in node.children do
-        if edge.isFocus then
-          let some child := nodes[childIdx]? | throwError "MCTS proof replay focus child index out of bounds: {childIdx}"
-          unless child.data.isSolved do
-            throwError "MCTS proof replay encountered an unsolved AND child"
-          let some goal := goals[edge.focusIndex]? | throwError "MCTS proof replay focus index out of bounds: {edge.focusIndex}"
-          if !(← goal.isAssigned) then
-            setGoals [goal]
-            replaySolvedNode ctx heartbeats nodes childIdx
+      for (edge, childIdx) in focusChildren node do
+        unless childIsSolved nodes childIdx do
+          throwError "MCTS proof replay encountered an unsolved AND child"
+        let some goal := goals[edge.focusIndex]? | throwError "MCTS proof replay focus index out of bounds: {edge.focusIndex}"
+        if !(← goal.isAssigned) then
+          setGoals [goal]
+          replaySolvedNode ctx heartbeats nodes childIdx
       setGoals goals.toList
       pruneSolvedGoals
 
 end MCTS
 
 open MCTS in
-def reapMCTS (evalPolicyValue : PolicyValueEval)
+structure MCTSResult where
+  ctx : ProofCheckContext
+  solution? : Option Nat
+  nodes : Array (Node MCTS.NodeData (MCTS.EdgeData × Nat))
+  info : Json
+
+open MCTS in
+def runMCTS (evalPolicyValue : PolicyValueEval)
     (maxNodes := MCTS.defaultMaxNodes)
-    (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := unsafe do
+    (maxSteps := MCTS.defaultMaxSteps)
+    (progress? : Option ProgressReporter := none) : TacticM MCTSResult := unsafe do
   let opts ← getOptions
   let path := reap.wall_clock_log_path.get opts
   if !path.isEmpty then
     openLogFile <| .mk path
   let ctx ← mkProofCheckContext
   let params := SearchHyperparameters.fromOptions opts
-  let (k, nodes) ← monteCarloTreeSearch ctx evalPolicyValue params (← NodeData.fromState) maxNodes maxSteps
+  let (k, nodes) ←
+    monteCarloTreeSearch ctx evalPolicyValue params (← NodeData.fromState) maxNodes maxSteps progress?
 
   let ppNodes ← nodes.mapM (ppNode params nodes)
   let info := json%{
@@ -472,13 +615,32 @@ def reapMCTS (evalPolicyValue : PolicyValueEval)
     nodes : $ppNodes
   }
   writeRawTree (reap.raw_tree_path.get opts) info
+  return {
+    ctx := ctx
+    solution? := k
+    nodes := nodes
+    info := info
+  }
 
-  if k.isSome then
-    let heartbeats := reap.heartbeats.get opts
-    let some root := nodes[0]? | unreachable!
+def checkProofScript (ctx : ProofCheckContext) (script : String) : TacticM (EvalResult Unit) :=
+  withoutModifyingState do
+    let heartbeats := reap.heartbeats.get (← getOptions)
+    match ← evalTacticStrNoFinalCheck ctx (MCTS.wrapProofScriptAsTactic script) heartbeats with
+    | .ok _ => checkProof ctx
+    | .error err => return .error err
+
+open MCTS in
+def reapMCTS (evalPolicyValue : PolicyValueEval)
+    (maxNodes := MCTS.defaultMaxNodes)
+    (maxSteps := MCTS.defaultMaxSteps) : TacticM Unit := unsafe do
+  let result ← runMCTS evalPolicyValue maxNodes maxSteps
+
+  if result.solution?.isSome then
+    let heartbeats := reap.heartbeats.get (← getOptions)
+    let some root := result.nodes[0]? | throwError "MCTS result has no root node"
     root.data.state.restore
-    replaySolvedNode ctx heartbeats nodes 0
-    match ← checkProof ctx with
+    replaySolvedNode result.ctx heartbeats result.nodes 0
+    match ← checkProof result.ctx with
     | .ok _ => return ()
     | .error err => throwError "MCTS final proof check failed after replay: {(toJson err).compress}"
 

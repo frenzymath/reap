@@ -33,6 +33,11 @@ def selfLoopPolicyValue : PolicyValueEval := fun _ => do
     ("trivial", #[], 1.0)
   ])
 
+def noSolutionPolicyValue : PolicyValueEval := fun _ => do
+  return (0.0, #[
+    ("skip", #[], 1.0)
+  ])
+
 def hasLocalDeclNamed (goals : List MVarId) (name : Name) : MetaM Bool := do
   let some goal := goals.head? | return false
   goal.withContext do
@@ -82,6 +87,20 @@ def runMCTSForTest (evalPolicyValue : PolicyValueEval) (maxNodes := 32) (maxStep
 def childTacticStrings (node : Node MCTS.NodeData (MCTS.EdgeData × Nat)) : Array String :=
   node.children.map fun (edge, _) => edge.tacticStr
 
+def guardProofScriptEquals
+    (nodes : Array (Node MCTS.NodeData (MCTS.EdgeData × Nat))) (nodeIdx : Nat)
+    (expected : String) : TacticM Unit := do
+  match MCTS.proofScriptForSolvedNode nodes nodeIdx with
+  | .ok actual =>
+      unless actual == expected do
+        throwError "unexpected proof script:\nexpected:\n{expected}\nactual:\n{actual}"
+  | .error err => throwError err
+
+def guardProofScriptChecks (ctx : ProofCheckContext) (script : String) : TacticM Unit := do
+  match ← checkProofScript ctx script with
+  | .ok _ => pure ()
+  | .error err => throwError "generated proof script failed checking: {(toJson err).compress}"
+
 example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
   constructor
   run_tac do
@@ -128,18 +147,81 @@ example : True := by
     unless tactics.contains "exact True.intro" do
       throwError "expected non-loop child solving tactic to remain"
 
+example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
+  run_tac do
+    let saved ← saveState
+    let ctx ← mkProofCheckContext
+    let (some nodeIdx, nodes) ← runMCTSForTest andOrPolicyValue (maxNodes := 32) (maxSteps := 32)
+      | throwError "expected MCTS to solve conjunction"
+    saved.restore
+    let expected := "constructor\n· exact hP\n· exact hQ"
+    guardProofScriptEquals nodes nodeIdx expected
+    guardProofScriptChecks ctx expected
+  constructor
+  · exact hP
+  · exact hQ
+
 example (P : Prop) (hP : P) : P := by
   run_tac do
     let saved ← saveState
+    let ctx ← mkProofCheckContext
     let unfocusedVisits ← IO.mkRef 0
-    let (some _, nodes) ← runMCTSForTest (deferredHavePolicyValue unfocusedVisits)
+    let (some nodeIdx, nodes) ← runMCTSForTest (deferredHavePolicyValue unfocusedVisits)
         (maxNodes := 32) (maxSteps := 32)
       | throwError "expected MCTS to solve deferred have proof"
-    unless nodes.any (fun node => node.children.any fun (edge, _) => edge.tacticStr == "exact h") do
-      throwError "expected MCTS to accept delayed final-check child tactic"
     saved.restore
-    let replayVisits ← IO.mkRef 0
-    reapMCTS (deferredHavePolicyValue replayVisits) (maxNodes := 32) (maxSteps := 32)
+    let expected := "have h : P := ?_\n· exact h\n· exact hP"
+    guardProofScriptEquals nodes nodeIdx expected
+    guardProofScriptChecks ctx expected
+  exact hP
+
+example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
+  run_tac do
+    let saved ← saveState
+    let progressRef ← IO.mkRef #[]
+    let report : ProgressReporter := fun progress => do
+      progressRef.modify fun progressValues => progressValues.push progress
+    let result ← runMCTS andOrPolicyValue
+      (maxNodes := 32) (maxSteps := 32) (progress? := some report)
+    saved.restore
+    unless result.solution?.isSome do
+      throwError "expected MCTS to solve conjunction"
+    let progressValues ← progressRef.get
+    if progressValues.isEmpty then
+      throwError "expected MCTS progress reporter to be called"
+    unless progressValues.any (fun progress => progress.visitedNodes > 1) do
+      throwError "expected MCTS progress to move past the root node"
+    unless progressValues.any (fun progress => progress.done && progress.solved) do
+      throwError "expected MCTS progress to report solved completion"
+  constructor
+  · exact hP
+  · exact hQ
+
+example (a b c : Nat) (h1 : a = b) (h2 : b = c) : a = c := by
+  run_tac do
+    let saved ← saveState
+    let ctx ← mkProofCheckContext
+    let (some nodeIdx, nodes) ← runMCTSForTest transPolicyValue (maxNodes := 32) (maxSteps := 32)
+      | throwError "expected MCTS to solve transitivity"
+    saved.restore
+    let expected := "trans b\n· exact h1\n· exact h2"
+    guardProofScriptEquals nodes nodeIdx expected
+    guardProofScriptChecks ctx expected
+  trans b
+  · exact h1
+  · exact h2
+
+example : True := by
+  run_tac do
+    let saved ← saveState
+    let (solution?, nodes) ← runMCTSForTest noSolutionPolicyValue (maxNodes := 8) (maxSteps := 8)
+    saved.restore
+    if solution?.isSome then
+      throwError "expected no solution"
+    match MCTS.proofScriptForSolvedNode nodes 0 with
+    | .ok script => throwError "expected proof script generation to fail, got:\n{script}"
+    | .error _ => pure ()
+  trivial
 
 example : Nat.succ 0 = 0 + 1 := by
   run_tac do
