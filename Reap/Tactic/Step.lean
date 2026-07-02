@@ -10,11 +10,7 @@ public meta section
 
 namespace Reap.TreeSearch
 
-def withHeartbeats {m : Type _ → Type _} {α : Type _}
-    [Monad m] [MonadWithReaderOf Core.Context m] [MonadControlT CoreM m]
-    (heartbeats : Nat) (x : m α) : m α :=
-  withCurrHeartbeats <|
-    withReader (fun s => { s with maxHeartbeats := heartbeats }) x
+
 
 partial def collectAuxDeclNames (lctx : LocalContext) (e : Expr) (names : Array Name := #[]) : Array Name :=
   match e with
@@ -108,13 +104,6 @@ instance : ToJson (EvalResult Unit) where
   | .ok _ => json%{ "ok": null }
   | .error e => json% { "error": $e }
 
-def withCatchRuntime {α : Type} (act : TacticM (EvalResult α)) : TacticM (EvalResult α) := do
-  try
-    tryCatchRuntimeEx (handler := fun ex => do return .error (← EvalError.fromException ex))
-      act
-  catch ex =>
-    return .error (← EvalError.fromException ex)
-
 def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option PreDefinition) := do
   goal.withContext do
     let lctx ← getLCtx
@@ -207,7 +196,6 @@ def checkProof (ctx : ProofCheckContext) : TacticM (EvalResult Unit) := do
     return .error .finalProofCheckFailed
   return .ok ()
 
-
 def isQuestionTacticKind (kind : SyntaxNodeKind) : Bool :=
   kind == `sorry || kind == `admit || kind == `Lean.Parser.Tactic.repeat' ||
     (if let .str _ x := kind then x.endsWith "?" else false)
@@ -231,6 +219,13 @@ def checkTacticSyntax (stx : Syntax) : EvalResult Unit :=
   | some kind => .error (.forbiddenTactic kind)
   | none => .ok ()
 
+def withCatchRuntime {α : Type} (act : TacticM (EvalResult α)) : TacticM (EvalResult α) := do
+  try
+    tryCatchRuntimeEx (handler := fun ex => do return .error (← EvalError.fromException ex))
+      act
+  catch ex =>
+    return .error (← EvalError.fromException ex)
+
 def withTimeout {α : Type} (timeout : Nat) (act : TacticM α) : TacticM (Option α) := do
   let deadline := (← IO.monoMsNow) + timeout
   let (cancel, task) ← TacticM.asTask act
@@ -239,6 +234,12 @@ def withTimeout {α : Type} (timeout : Nat) (act : TacticM α) : TacticM (Option
     IO.sleep 1
   cancel
   return none
+
+def withHeartbeats {m : Type _ → Type _} {α : Type _}
+    [Monad m] [MonadWithReaderOf Core.Context m] [MonadControlT CoreM m]
+    (heartbeats : Nat) (x : m α) : m α :=
+  withCurrHeartbeats <|
+    withReader (fun s => { s with maxHeartbeats := heartbeats }) x
 
 def runTacticSyntax (stx : Syntax) (heartbeats : Nat) (timeout : Nat) : TacticM (EvalResult (List Message)) := do
   match ← withTimeout timeout (withCapturedMessages do

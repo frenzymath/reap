@@ -1,4 +1,4 @@
-import TreeSearch.BestFirst
+import Reap.TreeSearch.BestFirst
 
 set_option linter.unusedSimpArgs false
 
