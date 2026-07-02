@@ -11,8 +11,8 @@ git = "https://github.com/frenzymath/openai_client.git"
 rev = "main"
 
 [[require]]
-name = "TreeSearch"
-git = "git@github.com:frenzymath/TreeSearch.git"
+name = "batteries"
+scope = "leanprover-community"
 rev = "main"
 
 [[lean_lib]]

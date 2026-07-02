@@ -5,8 +5,8 @@ public meta import Reap.PremiseSelection.API
 public meta import Reap.Tactic.State
 public meta import Reap.Tactic.Step
 public meta import Reap.Tactic.WallClock
-public meta import TreeSearch.BestFirst
-public meta import TreeSearch.MCTS
+public meta import Reap.TreeSearch.MCTS
+public meta import Reap.TreeSearch.BestFirst
 open Lean Meta Elab Tactic TreeSearch
 open Reap.WallClock
 
