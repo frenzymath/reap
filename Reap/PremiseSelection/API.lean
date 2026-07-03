@@ -14,8 +14,6 @@ deriving ToJson, FromJson
 structure PremiseSelectionResult where
   formal_name : String
   formal_statement : String
-  informal_statement : String
-  informal_name : String
 deriving ToJson, FromJson, Repr
 
 structure PremiseSelectionClient where
@@ -30,8 +28,7 @@ def getPremises (s : String) (num_results : Nat := 6) : CoreM <| Array PremiseSe
   match (← cache.get).get? (s, num_results) with
   | some results => return results
   | none => do
-    let s' := System.Uri.escapeUri s
-    let req := PremiseSelectionRequest.mk s' num_results
+    let req := PremiseSelectionRequest.mk s num_results
     let url := reap.ps_endpoint.get (← getOptions)
     let results : Array PremiseSelectionResult ← Requests.post url req
     cache.modify fun m => m.insert (s, num_results) results
