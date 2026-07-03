@@ -2,7 +2,6 @@ module
 public meta import Lean.Elab.Task
 public meta import OpenAIClient
 public meta import Reap.Options
-public meta import Reap.Future.Basic
 public meta import Reap.PremiseSelection.API
 public meta import Reap.Tactic.WallClock
 
@@ -26,6 +25,15 @@ def OpenAIChatChoice.computeLogProbability (choice: OpenAIChatChoice) : Float :=
 
 def OpenAIChatChoice.computeProbability (choice: OpenAIChatChoice) : Float :=
   Float.exp $ OpenAIChatChoice.computeLogProbability choice
+namespace Array
+
+def mapIdxM' {α : Type u} {β : Type v} {m : Type v → Type w} [Monad m] (f : Nat → α → m β) (as : Array α) : m (Array β) :=
+  as.mapIdxM fun i a => f i a
+
+def mapIdx' {α : Type u} {β : Type v} (f : Nat → α → β) (as : Array α) : Array β :=
+  Id.run <| as.mapIdxM' f
+
+end Array
 
 namespace TacticGenerator
 
@@ -58,11 +66,8 @@ def parseChatResponseOpenAI (res: OpenAIChatResponse) : Array (String × Float) 
 
 def mkRelatedTheorem (_id: Nat) (ps : PremiseSelectionResult) : String :=
   let formalName := ps.formal_name
-  -- let informalName := ps.informal_name
   let formalStatement := ps.formal_statement
-  -- "ID: " ++ toString id ++ "\n" ++
   "Formal name: " ++ formalName ++ "\n" ++
-  -- "Informal name: " ++ informalName ++ "\n" ++
   "Formal statement: " ++ formalStatement
 
 def mkPrompt (tacticState : String) (relatedTheorems: Array PremiseSelectionResult) : String :=
