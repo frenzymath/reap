@@ -8,7 +8,6 @@ public meta import Lean.Elab.Task
 public meta import Reap.Options
 public meta import Reap.Tactic.Generator
 public meta import Reap.Tactic.TreeSearch
-public meta import Reap.Future.PP
 public meta import Reap.TreeSearch.Basic
 
 public meta section
