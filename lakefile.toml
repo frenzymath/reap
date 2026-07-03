@@ -11,9 +11,12 @@ git = "https://github.com/frenzymath/openai_client.git"
 rev = "main"
 
 [[require]]
-name = "aesop"
+name = "batteries"
 scope = "leanprover-community"
-rev = "master"
+rev = "main"
 
 [[lean_lib]]
 name = "Reap"
+
+[[lean_lib]]
+name = "Reap.Test"
