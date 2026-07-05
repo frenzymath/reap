@@ -1,6 +1,6 @@
 # Reap Tactic
 
-<video controls src="https://raw.githubusercontent.com/frenzymath/reap/dev/docs/demo.mp4" width="100%"></video>
+<video controls src="https://github.com/user-attachments/assets/9ca983ea-24bb-4b84-a676-919431787ac1" width="100%"></video>
 
 Use `reap` tactic to leverage the power of LLM in your formal proof.
 
