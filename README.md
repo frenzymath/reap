@@ -1,8 +1,8 @@
 # Reap Tactic
 
-<video controls src="https://github.com/user-attachments/assets/9ca983ea-24bb-4b84-a676-919431787ac1" width="100%"></video>
+Use `reap` tactic to leverage the power of neural prover in your formal proof.
 
-Use `reap` tactic to leverage the power of LLM in your formal proof.
+<video controls src="https://github.com/user-attachments/assets/9ca983ea-24bb-4b84-a676-919431787ac1" width="100%"></video>
 
 ## Introduction
 
