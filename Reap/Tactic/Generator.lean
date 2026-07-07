@@ -2,7 +2,7 @@ module
 public meta import Lean.Elab.Task
 public meta import OpenAIClient
 public meta import Reap.Options
-public meta import Reap.PremiseSelection.API
+public meta import Reap.PremiseSelection.Syntax
 public meta import Reap.Tactic.WallClock
 
 public meta section
@@ -100,6 +100,11 @@ def getRelatedTheorems (ppGoal : String) (opts : Options) : CoreM (Array Premise
       (← retryCoreM?
         (PremiseSelectionClient.getPremises ppGoal (reap.num_premises.get opts))).getD #[]
 
+def getRelatedTheoremsFromSelector (mvarIds : List MVarId) (ppGoal : String)
+    (opts : Options) : MetaM (Array PremiseSelectionResult) := do
+  withLogWallClockTime "premise_select" (fun result => json%{ goal: $ppGoal, result: $result }) do
+    selectPremisesForGoals mvarIds (reap.num_premises.get opts)
+
 def mkChatRequest (opts : Options) (prompt : String) (n : Nat) : OpenAIChatRequest := {
   model := reap.model.get opts
   messages := [ { role := "user", content := prompt } ]
@@ -156,21 +161,28 @@ def generatePPTactics (ppGoal : String) : CoreM (Array PremiseSelectionResult ×
 def Meta.ppProofState (mvarIds : List MVarId) : MetaM Format := do
   return Std.Format.joinSep (← mvarIds.mapM (Meta.ppGoal)) "\n".toFormat
 
+def generateTacticsForGoals (mvarIds : List MVarId) :
+    MetaM (Array PremiseSelectionResult × Array (String × Float)) := do
+  let opts ← getOptions
+  let generator ← getClient
+  let ppProofState := toString (← Meta.ppProofState mvarIds)
+  let relatedTheorems ← getRelatedTheoremsFromSelector mvarIds ppProofState opts
+  let prompt := mkPrompt ppProofState relatedTheorems
+  let tactics ← generatePolicyFromPrompt generator opts ppProofState relatedTheorems prompt
+  return (relatedTheorems, tactics)
 
 def generateTactics (mvarIds : List MVarId) : MetaM <| Array (String × Float) := do
-  let ppProofState := toString (← Meta.ppProofState mvarIds)
-  return (← generatePPTactics ppProofState).2
+  return (← generateTacticsForGoals mvarIds).2
 
 def generateTacticsWithPremises (mvarIds : List MVarId) : MetaM <| Array (String × Array PremiseSelectionResult × Float) := do
-  let ppProofState := toString (← Meta.ppProofState mvarIds)
-  let (ps, res) ← generatePPTactics ppProofState
+  let (ps, res) ← generateTacticsForGoals mvarIds
   return res.map fun (x, y) => (x, ps, y)
 
 def generateValue (mvarIds : List MVarId) : MetaM Float := do
   let opts ← getOptions
   let generator ← getClient
   let ppProofState := toString (← Meta.ppProofState mvarIds)
-  let relatedTheorems ← getRelatedTheorems ppProofState opts
+  let relatedTheorems ← getRelatedTheoremsFromSelector mvarIds ppProofState opts
   let prompt := mkPrompt ppProofState relatedTheorems
   generateValueFromPrompt generator opts ppProofState relatedTheorems prompt
 
@@ -179,7 +191,7 @@ def generatePolicyValue (mvarIds : List MVarId) :
   let opts ← getOptions
   let generator ← getClient
   let ppProofState := toString (← Meta.ppProofState mvarIds)
-  let relatedTheorems ← getRelatedTheorems ppProofState opts
+  let relatedTheorems ← getRelatedTheoremsFromSelector mvarIds ppProofState opts
   let prompt := mkPrompt ppProofState relatedTheorems
   let (_, valueTask) ← Lean.Core.CoreM.asTask <|
     generateValueFromPrompt generator opts ppProofState relatedTheorems prompt
