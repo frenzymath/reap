@@ -4,6 +4,56 @@ public meta import Lean.Data.Options
 
 public meta section
 
+structure ReapGenerationConfig where
+  /-- Number of samples to generate. -/
+  numSamples : Nat := 6
+  /-- Number of queries to premise selection service. -/
+  numPremises : Nat := 16
+  /-- Maximum number of tokens in the response. -/
+  maxTokens : Nat := 1024
+  /-- Temperature for the LLM. -/
+  temperature : Float := 0.99
+
+structure ReapMCTSConfig where
+  /-- MCTS exploration hyper-parameter c_base. -/
+  cBase : Float := 3200.0
+  /-- MCTS exploration hyper-parameter c_init. -/
+  cInit : Float := 0.001
+  /-- MCTS value discount multiplier, γ in the AlphaProof paper. -/
+  visitDiscount : Float := 0.99
+  /-- MCTS prior temperature exponent. τ in the AlphaProof paper. -/
+  priorTemperature : Float := 50.0
+  /-- MCTS progressive sampling c parameter. -/
+  progressiveSamplingC : Float := 0.01
+  /-- MCTS progressive sampling alpha parameter. -/
+  progressiveSamplingAlpha : Float := 0.6
+
+structure ReapTotalLimitsConfig where
+  /-- Maximum number of MCTS nodes to explore. -/
+  maxGoals : Nat := 64
+  /-- Maximum number of MCTS iterations. -/
+  maxSteps : Nat := 64
+
+structure ReapStepLimitsConfig where
+  /-- Maximum heartbeats per tactic -/
+  heartbeats : Nat := 1000000000
+  /-- Timeout in milliseconds per tactic -/
+  timeout : Nat := 200000
+
+structure ReapResourceLimitsConfig where
+  /-- Limits for the whole MCTS search. -/
+  total : ReapTotalLimitsConfig := {}
+  /-- Limits for each candidate tactic evaluation. -/
+  step : ReapStepLimitsConfig := {}
+
+structure ReapConfig where
+  /-- Resource limits for the search and tactic evaluation. -/
+  limits : ReapResourceLimitsConfig := {}
+  /-- Parameters for premise selection and tactic generation. -/
+  generation : ReapGenerationConfig := {}
+  /-- MCTS hyperparameters. -/
+  mcts : ReapMCTSConfig := {}
+
 register_option reap.ps_endpoint : String :=
   { defValue := "<premise_selection_endpoint>"
     descr := "Endpoint for the premise selection service." }
@@ -11,10 +61,6 @@ register_option reap.ps_endpoint : String :=
 register_option reap.value_endpoint : String :=
   { defValue := "<value_endpoint>"
     descr := "Endpoint for the value service." }
-
-register_option reap.use_value_model : Bool :=
-  { defValue := true
-    descr := "Whether to use the value model service." }
 
 register_option reap.policy_endpoint : String :=
   { defValue := "<policy_endpoint>"
@@ -24,35 +70,9 @@ register_option reap.llm_api_key : String :=
   { defValue := "awesome-reaper"
     descr := "API key for the LLM service." }
 
-register_option reap.num_samples : Nat :=
-  { defValue := 6
-    descr := "Number of samples to generate." }
-
-register_option reap.num_premises : Nat :=
-  { defValue := 16
-    descr := "Number of queries to the premise selection service." }
-
-register_option reap.max_tokens : Nat :=
-  { defValue := 1024
-    descr := "Maximum number of tokens in the response." }
-
 register_option reap.model : String :=
   { defValue := "awesome-reaper"
     descr := "Model to use for the LLM." }
-
-register_option reap.temperature : Nat :=
-  { defValue := 99
-    descr := "Temperature for the LLM (In percentage)." }
-
-register_option reap.heartbeats : Nat := {
-  defValue := 1000000000
-  descr := "Maximum heartbeats per tactic"
-}
-
-register_option reap.timeout : Nat := {
-  defValue := 200000
-  descr := "Timeout in milliseconds per tactic"
-}
 
 register_option reap.wall_clock_log_path : String :=
   { defValue := ""
@@ -61,27 +81,3 @@ register_option reap.wall_clock_log_path : String :=
 register_option reap.raw_tree_path : String :=
   { defValue := ""
     descr := "Optional JSON path for the final raw MCTS tree. Empty disables file export." }
-
-register_option reap.c_base : Nat :=
-  { defValue := 3200
-    descr := "MCTS exploration hyper-parameter c_base." }
-
-register_option reap.c_init : Nat :=
-  { defValue := 1
-    descr := "MCTS exploration hyper-parameter c_init, scaled by 1000." }
-
-register_option reap.visit_discount : Nat :=
-  { defValue := 990
-    descr := "MCTS value discount multiplier, scaled by 1000. γ in the AlphaProof paper." }
-
-register_option reap.prior_temperature : Nat :=
-  { defValue := 50
-    descr := "MCTS prior temperature exponent. τ in the AlphaProof paper." }
-
-register_option reap.progressive_sampling_c : Nat :=
-  { defValue := 10
-    descr := "MCTS progressive sampling c parameter, scaled by 1000." }
-
-register_option reap.progressive_sampling_alpha : Nat :=
-  { defValue := 600
-    descr := "MCTS progressive sampling alpha parameter, scaled by 1000." }

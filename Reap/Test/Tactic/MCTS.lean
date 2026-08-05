@@ -9,18 +9,26 @@ set_option linter.unusedSimpArgs false
 example : True := by
   run_tac do
     let reapStx ←
-      match ← parseTacticStr "reap (config := { maxGoals := 17, maxSteps := 23 })" with
+      match ← parseTacticStr "reap (config := { limits := { total := { maxGoals := 17, maxSteps := 23 }, step := { heartbeats := 29, timeout := 31 } }, generation := { numSamples := 7, numPremises := 11, maxTokens := 37, temperature := 0.41 }, mcts := { cBase := 43.0, cInit := 0.047, visitDiscount := 0.953, priorTemperature := 59.0, progressiveSamplingC := 0.061, progressiveSamplingAlpha := 0.67 } })" with
       | .ok stx => pure stx
       | .error err => throwError "failed to parse reap configuration: {toString err}"
     let closingConfig ← elabReapConfig reapStx[1]
-    unless closingConfig.maxGoals == 17 && closingConfig.maxSteps == 23 do
+    unless closingConfig.limits.total.maxGoals == 17 && closingConfig.limits.total.maxSteps == 23 &&
+        closingConfig.limits.step.heartbeats == 29 && closingConfig.limits.step.timeout == 31 &&
+        closingConfig.generation.numSamples == 7 && closingConfig.generation.numPremises == 11 &&
+        closingConfig.generation.maxTokens == 37 && closingConfig.generation.temperature == 0.41 &&
+        closingConfig.mcts.cBase == 43.0 && closingConfig.mcts.cInit == 0.047 &&
+        closingConfig.mcts.visitDiscount == 0.953 && closingConfig.mcts.priorTemperature == 59.0 &&
+        closingConfig.mcts.progressiveSamplingC == 0.061 && closingConfig.mcts.progressiveSamplingAlpha == 0.67 do
       throwError "reap configuration was not elaborated correctly"
     let tryThisStx ←
-      match ← parseTacticStr "reap? (maxGoals := 29) (maxSteps := 31)" with
+      match ← parseTacticStr "reap? (limits.total.maxGoals := 71) (limits.total.maxSteps := 73) (generation.numSamples := 79) (generation.numPremises := 83) (mcts.cInit := 0.089) (mcts.priorTemperature := 97.0)" with
       | .ok stx => pure stx
       | .error err => throwError "failed to parse reap? configuration: {toString err}"
     let tryThisConfig ← elabReapConfig tryThisStx[1]
-    unless tryThisConfig.maxGoals == 29 && tryThisConfig.maxSteps == 31 do
+    unless tryThisConfig.limits.total.maxGoals == 71 && tryThisConfig.limits.total.maxSteps == 73 &&
+        tryThisConfig.generation.numSamples == 79 && tryThisConfig.generation.numPremises == 83 &&
+        tryThisConfig.mcts.cInit == 0.089 && tryThisConfig.mcts.priorTemperature == 97.0 do
       throwError "reap? configuration was not elaborated correctly"
   trivial
 
@@ -86,11 +94,14 @@ def deferredHavePolicyValue (unfocusedVisits : IO.Ref Nat) : PolicyValueEval := 
   else
     return (0.0, #[("exact hP", #[], 1.0)])
 
-def runMCTSForTest (evalPolicyValue : PolicyValueEval) (maxNodes := 32) (maxSteps := 32) :
+def testConfig (maxGoals maxSteps : Nat) : ReapConfig := {
+  limits := { total := { maxGoals, maxSteps } }
+}
+
+def runMCTSForTest (evalPolicyValue : PolicyValueEval) (config : ReapConfig) :
     TacticM (Option Nat × Array (Node MCTS.NodeData (MCTS.EdgeData × Nat))) := unsafe do
   let ctx ← mkProofCheckContext
-  let params := SearchHyperparameters.fromOptions (← getOptions)
-  MCTS.monteCarloTreeSearch ctx evalPolicyValue params (← MCTS.NodeData.fromState) maxNodes maxSteps
+  MCTS.monteCarloTreeSearch ctx evalPolicyValue config (← MCTS.NodeData.fromState) none
 
 def childTacticStrings (node : Node MCTS.NodeData (MCTS.EdgeData × Nat)) : Array String :=
   node.children.map fun (edge, _) => edge.tacticStr
@@ -104,8 +115,9 @@ def guardProofScriptEquals
         throwError "unexpected proof script:\nexpected:\n{expected}\nactual:\n{actual}"
   | .error err => throwError err
 
-def guardProofScriptChecks (ctx : ProofCheckContext) (script : String) : TacticM Unit := do
-  match ← checkProofScript ctx script with
+def guardProofScriptChecks (limits : ReapStepLimitsConfig) (ctx : ProofCheckContext)
+    (script : String) : TacticM Unit := do
+  match ← checkProofScript limits ctx script with
   | .ok _ => pure ()
   | .error err => throwError "generated proof script failed checking: {(toJson err).compress}"
 
@@ -129,7 +141,7 @@ example : ∃ n : Nat, n = n := by
 
 example : True := by
   run_tac do
-    let (_, nodes) ← runMCTSForTest selfLoopPolicyValue (maxNodes := 8) (maxSteps := 8)
+    let (_, nodes) ← runMCTSForTest selfLoopPolicyValue (testConfig 8 8)
     let some root := nodes[0]? | unreachable!
     let tactics := childTacticStrings root
     if tactics.contains "skip" then
@@ -139,7 +151,7 @@ example : True := by
 
 example : True := by
   run_tac do
-    let (_, nodes) ← runMCTSForTest ancestorLoopPolicyValue (maxNodes := 8) (maxSteps := 8)
+    let (_, nodes) ← runMCTSForTest ancestorLoopPolicyValue (testConfig 8 8)
     let some root := nodes[0]? | unreachable!
     unless root.children.size == 1 do
       throwError "expected duplicate non-loop child states to merge"
@@ -159,12 +171,12 @@ example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
   run_tac do
     let saved ← saveState
     let ctx ← mkProofCheckContext
-    let (some nodeIdx, nodes) ← runMCTSForTest andOrPolicyValue (maxNodes := 32) (maxSteps := 32)
+    let (some nodeIdx, nodes) ← runMCTSForTest andOrPolicyValue (testConfig 32 32)
       | throwError "expected MCTS to solve conjunction"
     saved.restore
     let expected := "constructor\n· exact hP\n· exact hQ"
     guardProofScriptEquals nodes nodeIdx expected
-    guardProofScriptChecks ctx expected
+    guardProofScriptChecks (testConfig 32 32).limits.step ctx expected
   constructor
   · exact hP
   · exact hQ
@@ -175,12 +187,12 @@ example (P : Prop) (hP : P) : P := by
     let ctx ← mkProofCheckContext
     let unfocusedVisits ← IO.mkRef 0
     let (some nodeIdx, nodes) ← runMCTSForTest (deferredHavePolicyValue unfocusedVisits)
-        (maxNodes := 32) (maxSteps := 32)
+        (testConfig 32 32)
       | throwError "expected MCTS to solve deferred have proof"
     saved.restore
     let expected := "have h : P := ?_\n· exact h\n· exact hP"
     guardProofScriptEquals nodes nodeIdx expected
-    guardProofScriptChecks ctx expected
+    guardProofScriptChecks (testConfig 32 32).limits.step ctx expected
   exact hP
 
 example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
@@ -189,8 +201,7 @@ example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
     let progressRef ← IO.mkRef #[]
     let report : ProgressReporter := fun progress => do
       progressRef.modify fun progressValues => progressValues.push progress
-    let result ← runMCTS andOrPolicyValue
-      (maxNodes := 32) (maxSteps := 32) (progress? := some report)
+    let result ← runMCTS andOrPolicyValue (testConfig 32 32) (some report)
     saved.restore
     unless result.solution?.isSome do
       throwError "expected MCTS to solve conjunction"
@@ -209,12 +220,12 @@ example (a b c : Nat) (h1 : a = b) (h2 : b = c) : a = c := by
   run_tac do
     let saved ← saveState
     let ctx ← mkProofCheckContext
-    let (some nodeIdx, nodes) ← runMCTSForTest transPolicyValue (maxNodes := 32) (maxSteps := 32)
+    let (some nodeIdx, nodes) ← runMCTSForTest transPolicyValue (testConfig 32 32)
       | throwError "expected MCTS to solve transitivity"
     saved.restore
     let expected := "trans b\n· exact h1\n· exact h2"
     guardProofScriptEquals nodes nodeIdx expected
-    guardProofScriptChecks ctx expected
+    guardProofScriptChecks (testConfig 32 32).limits.step ctx expected
   trans b
   · exact h1
   · exact h2
@@ -222,7 +233,7 @@ example (a b c : Nat) (h1 : a = b) (h2 : b = c) : a = c := by
 example : True := by
   run_tac do
     let saved ← saveState
-    let (solution?, nodes) ← runMCTSForTest noSolutionPolicyValue (maxNodes := 8) (maxSteps := 8)
+    let (solution?, nodes) ← runMCTSForTest noSolutionPolicyValue (testConfig 8 8)
     saved.restore
     if solution?.isSome then
       throwError "expected no solution"
@@ -232,10 +243,10 @@ example : True := by
   trivial
 
 example (a b c : Nat) (h1 : a = b) (h2 : b = c) : a = c := by
-  run_tac reapMCTS transPolicyValue (maxNodes := 32) (maxSteps := 32)
+  run_tac reapMCTS transPolicyValue (testConfig 32 32)
 
 example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
-  run_tac reapMCTS andOrPolicyValue (maxNodes := 32) (maxSteps := 32)
+  run_tac reapMCTS andOrPolicyValue (testConfig 32 32)
 
 example : ∃ n : Nat, n = n := by
-  run_tac reapMCTS existsPolicyValue (maxNodes := 32) (maxSteps := 32)
+  run_tac reapMCTS existsPolicyValue (testConfig 32 32)

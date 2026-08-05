@@ -8,11 +8,9 @@ namespace TreeSearch
 public meta section
 variable {m : Type → Type} [Monad m] {σ ε : Type}
 
-def BestFirst.defaultMaxNodes : Nat := 64
-
 def bestFirstSearch (priority : σ → m Float)
     (isTerminal : σ → m Bool) (expand : σ → m (Array (ε × σ))) (start : σ)
-    (maxNodes := BestFirst.defaultMaxNodes)
+    (maxNodes : Nat)
     : m (Option Nat × Array (Node σ (ε × Nat))) := do
   let mut nodes := #[ { data := start } ]
   let mut heap := BinaryHeap.singleton (fun a b => a.fst < b.fst) (0.0, 0)

@@ -15,11 +15,7 @@ public meta section
 
 open Lean Elab Tactic Server
 
-structure reapConfig where
-  maxGoals : Nat := 64
-  maxSteps : Nat := 64
-
-declare_config_elab elabReapConfig reapConfig
+declare_config_elab elabReapConfig ReapConfig
 
 structure TacticWidgetRangeInfo where
   panelRange : Syntax.Range
@@ -239,15 +235,14 @@ def addMCTSProgressWidget (tacRef : Syntax) (id : Nat)
 
 elab "reap" config:Lean.Parser.Tactic.optConfig : tactic => do
   let config ← elabReapConfig config
-  Reap.TreeSearch.reapMCTS TacticGenerator.generatePolicyValue config.maxGoals config.maxSteps
+  Reap.TreeSearch.reapMCTS (TacticGenerator.generatePolicyValue config.generation) config
 
 elab "reap?" config:Lean.Parser.Tactic.optConfig : tactic => do
   let stx ← getRef
   let config ← elabReapConfig config
-  let maxGoals := config.maxGoals
-  let maxSteps := config.maxSteps
   let progressId ← freshReapMCTSProgressId
-  let initialProgress := ReapMCTSProgressView.initial maxGoals maxSteps
+  let initialProgress := ReapMCTSProgressView.initial
+    config.limits.total.maxGoals config.limits.total.maxSteps
   setReapMCTSProgress progressId initialProgress
   addMCTSProgressWidget stx progressId initialProgress
   let markDone (solved : Bool) (status goalType : String) (script : Option String := none) :
@@ -267,8 +262,8 @@ elab "reap?" config:Lean.Parser.Tactic.optConfig : tactic => do
     try
       let saved ← saveState
       let result ← Reap.TreeSearch.runMCTS
-        TacticGenerator.generatePolicyValue
-        (maxNodes := maxGoals) (maxSteps := maxSteps) (progress? := some reportProgress)
+        (TacticGenerator.generatePolicyValue config.generation) config
+        (some reportProgress)
       saved.restore
       match result.solution? with
       | none =>
@@ -278,7 +273,7 @@ elab "reap?" config:Lean.Parser.Tactic.optConfig : tactic => do
           | .error _ =>
               markDone false "failed" "proof script extraction failed"
           | .ok script =>
-              match ← Reap.TreeSearch.checkProofScript result.ctx script with
+              match ← Reap.TreeSearch.checkProofScript config.limits.step result.ctx script with
               | .ok _ =>
                   markDone true "solved" "no goals" (some (← formatTryThisText stx script))
               | .error _ =>
