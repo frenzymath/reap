@@ -80,9 +80,6 @@ unsafe def mctsStep
       setAtT i { x with data := s' }
       return data
 
-def MCTS.defaultMaxNodes : Nat := 64
-def MCTS.defaultMaxSteps : Nat := 64
-
 unsafe def monteCarloTreeSearch
     (isTerminal : σ → SearchM Bool)
     (visitNode : Nat → Node σ (ε × σ) → SearchM Unit)
@@ -90,8 +87,7 @@ unsafe def monteCarloTreeSearch
     (updateEdge : σ → ε → σ → σ → SearchM ε)
     (updateNode : Node σ (ε × σ) → σ → SearchM σ)
     (start : σ)
-    (maxNodes := MCTS.defaultMaxNodes)
-    (maxSteps := MCTS.defaultMaxSteps) :
+    (maxNodes maxSteps : Nat) :
     m (Option Nat × Array (Node σ (ε × Nat))) :=
   StateT.run (s := #[ { data := start } ]) do
     let mut step := 0
