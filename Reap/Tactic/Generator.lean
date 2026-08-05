@@ -26,15 +26,6 @@ def OpenAIChatChoice.computeLogProbability (choice: OpenAIChatChoice) : Float :=
 
 def OpenAIChatChoice.computeProbability (choice: OpenAIChatChoice) : Float :=
   Float.exp $ OpenAIChatChoice.computeLogProbability choice
-namespace Array
-
-def mapIdxM' {α : Type u} {β : Type v} {m : Type v → Type w} [Monad m] (f : Nat → α → m β) (as : Array α) : m (Array β) :=
-  as.mapIdxM fun i a => f i a
-
-def mapIdx' {α : Type u} {β : Type v} (f : Nat → α → β) (as : Array α) : Array β :=
-  Id.run <| as.mapIdxM' f
-
-end Array
 
 namespace TacticGenerator
 
@@ -48,7 +39,8 @@ def stripThinkingPrefix (s : String) : String :=
     else s
   else s
 
-def retryCoreM? {α : Type _} (action : CoreM α) (maxRetries : Nat := 3) : CoreM (Option α) := do
+def retryM? {α ε : Type} {m : Type → Type} [Monad m] [MonadExcept ε m]
+    (action : m α) (maxRetries : Nat := 3) : m (Option α) := do
   let mut result : Option α := none
   let mut i := 0
   while result.isNone && i < maxRetries do
@@ -74,7 +66,7 @@ def mkRelatedTheorem (_id: Nat) (ps : PremiseSelectionResult) : String :=
 def mkPrompt (tacticState : String) (relatedTheorems: Array PremiseSelectionResult) : String :=
   "User: Please generate a tactic in lean4 to solve the state.
 Here're some theorems that may be helpful:
-" ++ (Array.mapIdx' mkRelatedTheorem relatedTheorems |>.joinSep "\n") ++
+" ++ (relatedTheorems.mapIdx mkRelatedTheorem |>.joinSep "\n") ++
 "
 STATE:
 " ++ tacticState ++ "
@@ -117,7 +109,7 @@ def generatePolicyFromPrompt (generator : TacticGenerator) (config : ReapGenerat
   let mut results : List (String × Float) := []
   let req := mkChatRequest config generator.model prompt config.numSamples
   let res ← withLogWallClockTime "tactic_gen" (fun result => json%{ goal: $ppGoal, ps: $relatedTheorems, result: $result }) <|
-    retryCoreM? (generator.llmClient.generateChat req)
+    retryM? (generator.llmClient.generateChat req)
   if let some res := res then
     for result in (parseChatResponseOpenAI res) do
       results := results.insert result
@@ -131,7 +123,7 @@ def generateValueFromPrompt (generator : TacticGenerator) (config : ReapGenerati
     CoreM Float := do
   let req := mkChatRequest config generator.model prompt 1
   let result : Option ValueResult ← withLogWallClockTime "value" (fun result => json%{ state: $ppGoal, ps: $relatedTheorems, result: $result }) do
-    retryCoreM? (maxRetries := 3) do
+    retryM? (maxRetries := 3) do
       let res ← generator.valueClient.generateChat req
       let res := parseChatResponseOpenAI res
       let res := Json.parse res[0]!.1

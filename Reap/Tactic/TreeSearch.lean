@@ -1,13 +1,13 @@
 module
+public meta import Batteries
 public meta import Lean
 public meta import Reap.Options
 public meta import Reap.PremiseSelection.API
 public meta import Reap.Tactic.State
 public meta import Reap.Tactic.Step
 public meta import Reap.Tactic.WallClock
-public meta import Reap.TreeSearch.MCTS
-public meta import Reap.TreeSearch.BestFirst
-open Lean Meta Elab Tactic TreeSearch
+public meta import Reap.Tactic.IndexedTree
+open Lean Meta Elab Tactic
 open Reap.WallClock
 
 public meta section
@@ -570,7 +570,7 @@ def runMCTS (evalPolicyValue : PolicyValueEval) (config : ReapConfig)
     openLogFile <| .mk path
   let ctx ← mkProofCheckContext
   let (k, nodes) ←
-    monteCarloTreeSearch ctx evalPolicyValue config (← NodeData.fromState) progress?
+    MCTS.monteCarloTreeSearch ctx evalPolicyValue config (← NodeData.fromState) progress?
 
   let ppNodes ← nodes.mapM (ppNode config.mcts nodes)
   let info := json%{
