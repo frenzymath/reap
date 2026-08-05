@@ -6,6 +6,24 @@ open TreeSearch
 
 set_option linter.unusedSimpArgs false
 
+example : True := by
+  run_tac do
+    let reapStx ←
+      match ← parseTacticStr "reap (config := { maxGoals := 17, maxSteps := 23 })" with
+      | .ok stx => pure stx
+      | .error err => throwError "failed to parse reap configuration: {toString err}"
+    let closingConfig ← elabReapConfig reapStx[1]
+    unless closingConfig.maxGoals == 17 && closingConfig.maxSteps == 23 do
+      throwError "reap configuration was not elaborated correctly"
+    let tryThisStx ←
+      match ← parseTacticStr "reap? (maxGoals := 29) (maxSteps := 31)" with
+      | .ok stx => pure stx
+      | .error err => throwError "failed to parse reap? configuration: {toString err}"
+    let tryThisConfig ← elabReapConfig tryThisStx[1]
+    unless tryThisConfig.maxGoals == 29 && tryThisConfig.maxSteps == 31 do
+      throwError "reap? configuration was not elaborated correctly"
+  trivial
+
 def andOrPolicyValue : PolicyValueEval := fun _ => do
   return (0.0, #[
     ("constructor", #[], 1.0),

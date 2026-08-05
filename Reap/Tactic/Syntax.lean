@@ -4,6 +4,7 @@ public meta import Lean.Widget.UserWidget
 public meta import Lean.Meta.Tactic.TryThis
 public meta import Lean.Server.Rpc.RequestHandling
 public meta import Lean.Elab.Task
+public meta import Lean.Elab.Tactic.Config
 
 public meta import Reap.Options
 public meta import Reap.Tactic.Generator
@@ -13,6 +14,12 @@ public meta import Reap.TreeSearch.Basic
 public meta section
 
 open Lean Elab Tactic Server
+
+structure reapConfig where
+  maxGoals : Nat := 64
+  maxSteps : Nat := 64
+
+declare_config_elab elabReapConfig reapConfig
 
 structure TacticWidgetRangeInfo where
   panelRange : Syntax.Range
@@ -230,18 +237,15 @@ def addMCTSProgressWidget (tacRef : Syntax) (id : Nat)
     Widget.savePanelWidgetInfo
       (hash reapMCTSProgressWidget.javascript) (rpcEncode props) (.ofRange rangeInfo.panelRange)
 
-elab "reapMCTS" : tactic => do
-  let opts ← Lean.getOptions
-  let maxGoals := reap.max_goals.get opts
-  let maxSteps := reap.max_steps.get opts
-  Reap.TreeSearch.reapMCTS TacticGenerator.generatePolicyValue maxGoals maxSteps
+elab "reap" config:Lean.Parser.Tactic.optConfig : tactic => do
+  let config ← elabReapConfig config
+  Reap.TreeSearch.reapMCTS TacticGenerator.generatePolicyValue config.maxGoals config.maxSteps
 
-syntax (name := reapBangBang) "reap!!" : tactic
-
-@[tactic reapBangBang] def evalReapBangBang : Tactic := fun stx => do
-  let opts ← Lean.getOptions
-  let maxGoals := reap.max_goals.get opts
-  let maxSteps := reap.max_steps.get opts
+elab "reap?" config:Lean.Parser.Tactic.optConfig : tactic => do
+  let stx ← getRef
+  let config ← elabReapConfig config
+  let maxGoals := config.maxGoals
+  let maxSteps := config.maxSteps
   let progressId ← freshReapMCTSProgressId
   let initialProgress := ReapMCTSProgressView.initial maxGoals maxSteps
   setReapMCTSProgress progressId initialProgress
