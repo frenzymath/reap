@@ -2,7 +2,6 @@ import Reap.Tactic.Syntax
 
 open Lean Meta Elab Tactic
 open Reap.TreeSearch
-open TreeSearch
 
 set_option linter.unusedSimpArgs false
 
