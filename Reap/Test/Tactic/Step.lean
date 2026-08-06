@@ -68,6 +68,11 @@ theorem evalTacticStr_accepts_trivial : True := by
   guardEvalRejects "repeat' trivial"
   guardEvalAccepts "trivial"
 
+theorem evalTacticStr_accepts_omega_nat_cancellation {m n k : Nat}
+    (_hm : 2 ∣ m) (_meq : m = k * 2)
+    (h : 2 * (2 * k ^ 2) = 2 * n ^ 2) : 2 * k ^ 2 = n ^ 2 := by
+  guardEvalAccepts "omega"
+
 theorem evalTacticStr_rejects_placeholder_closed_goal : True := by
   guardEvalRejects "cases (_ : False)"
   trivial
