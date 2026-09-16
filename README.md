@@ -75,21 +75,35 @@ set_option reap.ps_endpoint "<premise_selection_endpoint>"
 
 theorem aux {m n : ℕ} (h₀ : m ∣ n) (h₁ : 2 ≤ m) (h₂ : m < n) : n / m ∣ n ∧ n / m < n := by
   -- This asks Reap to search and suggest a proof.
-  reap!!
+  reap?
 ```
 
-Here, `reap!!` runs Reap's MCTS proof search using the policy, value, and premise-selection services, then displays the assembled proof as a TryThis block. It does not replace the tactic automatically; use the `[apply]` link in the InfoView to insert the suggested proof.
+Here, `reap?` runs Reap's MCTS proof search using the policy, value, and premise-selection services, then displays the assembled proof as a TryThis block. It does not replace the tactic automatically; use the `[apply]` link in the InfoView to insert the suggested proof.
 
 ### RL interface
 
-For RL rollouts, `reapMCTS` runs the current MCTS search: it expands Lean proof
+For RL rollouts, `reap` runs the current MCTS search: it expands Lean proof
 states with policy-generated tactics, uses the value model to guide exploration,
 checks each step in Lean, and replays the proof when a solution is found.
 
-`reap!!` runs the same rollout asynchronously with UI reporting. Progress is shown in the Lean
+`reap?` runs the same rollout asynchronously with UI reporting. Progress is shown in the Lean
 InfoView as the "Reap MCTS progress" widget, with search status, step count, and
 current goal type. If a proof is found, the rollout result is shown there as a
 TryThis block with an `[apply]` link.
+
+Both tactics use the shared `ReapConfig` type. It groups per-invocation search
+limits, generation parameters, and MCTS parameters:
+
+```lean4
+reap (config := {
+  limits := { total := { maxGoals := 128, maxSteps := 48 } }
+  generation := { numSamples := 8, numPremises := 24, temperature := 0.7 }
+  mcts := { cInit := 0.002, visitDiscount := 0.995 }
+})
+```
+
+Individual nested fields can also be set with dotted shorthand, such as
+`reap? (limits.total.maxGoals := 128) (generation.numSamples := 8) (mcts.cInit := 0.002)`.
 
 Optional file outputs can be enabled with:
 
