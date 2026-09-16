@@ -2,6 +2,11 @@ import Reap.Tactic.Step
 
 open Lean Meta Elab Tactic Reap.TreeSearch
 
+def evalTestLimits : ReapStepLimitsConfig := {
+  heartbeats := 200000
+  timeout := 200000
+}
+
 partial def formatSyntaxTree (stx : Syntax) (indent : Nat := 0) : String :=
   let pad := String.ofList (List.replicate indent ' ')
   match stx with
@@ -21,14 +26,14 @@ elab "print_syntax_tree " s:str : tactic => do
 
 elab "guardEvalAccepts " s:str : tactic => do
   let ctx ← mkProofCheckContext
-  match ← evalTacticStr ctx s.getString 200000 with
+  match ← evalTacticStr evalTestLimits (some ctx) s.getString with
   | .ok _ => pure ()
   | .error err => throwError "expected tactic to be accepted, got: {toString err}"
 
 elab "guardEvalRejects " s:str : tactic => do
   withoutModifyingState do
     let ctx ← mkProofCheckContext
-    let result ← evalTacticStr ctx s.getString 200000
+    let result ← evalTacticStr evalTestLimits (some ctx) s.getString
     if result.isOk then
       throwError "expected tactic to be rejected"
 

@@ -4,15 +4,17 @@ public meta import Lean.Widget.UserWidget
 public meta import Lean.Meta.Tactic.TryThis
 public meta import Lean.Server.Rpc.RequestHandling
 public meta import Lean.Elab.Task
+public meta import Lean.Elab.Tactic.Config
 
 public meta import Reap.Options
 public meta import Reap.Tactic.Generator
 public meta import Reap.Tactic.TreeSearch
-public meta import Reap.TreeSearch.Basic
 
 public meta section
 
 open Lean Elab Tactic Server
+
+declare_config_elab elabReapConfig ReapConfig
 
 structure TacticWidgetRangeInfo where
   panelRange : Syntax.Range
@@ -230,20 +232,16 @@ def addMCTSProgressWidget (tacRef : Syntax) (id : Nat)
     Widget.savePanelWidgetInfo
       (hash reapMCTSProgressWidget.javascript) (rpcEncode props) (.ofRange rangeInfo.panelRange)
 
-elab "reapMCTS" : tactic => do
-  let opts ← Lean.getOptions
-  let maxGoals := reap.max_goals.get opts
-  let maxSteps := reap.max_steps.get opts
-  Reap.TreeSearch.reapMCTS TacticGenerator.generatePolicyValue maxGoals maxSteps
+elab "reap" config:Lean.Parser.Tactic.optConfig : tactic => do
+  let config ← elabReapConfig config
+  Reap.TreeSearch.reapMCTS (TacticGenerator.generatePolicyValue config.generation) config
 
-syntax (name := reapBangBang) "reap!!" : tactic
-
-@[tactic reapBangBang] def evalReapBangBang : Tactic := fun stx => do
-  let opts ← Lean.getOptions
-  let maxGoals := reap.max_goals.get opts
-  let maxSteps := reap.max_steps.get opts
+elab "reap?" config:Lean.Parser.Tactic.optConfig : tactic => do
+  let stx ← getRef
+  let config ← elabReapConfig config
   let progressId ← freshReapMCTSProgressId
-  let initialProgress := ReapMCTSProgressView.initial maxGoals maxSteps
+  let initialProgress := ReapMCTSProgressView.initial
+    config.limits.total.maxGoals config.limits.total.maxSteps
   setReapMCTSProgress progressId initialProgress
   addMCTSProgressWidget stx progressId initialProgress
   let markDone (solved : Bool) (status goalType : String) (script : Option String := none) :
@@ -263,8 +261,8 @@ syntax (name := reapBangBang) "reap!!" : tactic
     try
       let saved ← saveState
       let result ← Reap.TreeSearch.runMCTS
-        TacticGenerator.generatePolicyValue
-        (maxNodes := maxGoals) (maxSteps := maxSteps) (progress? := some reportProgress)
+        (TacticGenerator.generatePolicyValue config.generation) config
+        (some reportProgress)
       saved.restore
       match result.solution? with
       | none =>
@@ -274,7 +272,7 @@ syntax (name := reapBangBang) "reap!!" : tactic
           | .error _ =>
               markDone false "failed" "proof script extraction failed"
           | .ok script =>
-              match ← Reap.TreeSearch.checkProofScript result.ctx script with
+              match ← Reap.TreeSearch.checkProofScript config.limits.step result.ctx script with
               | .ok _ =>
                   markDone true "solved" "no goals" (some (← formatTryThisText stx script))
               | .error _ =>

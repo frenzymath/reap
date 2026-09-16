@@ -14,6 +14,7 @@ structure TacticGenerator where
   llmClient : OpenAIClient
   valueClient : OpenAIClient
   premiseSelectionClient : PremiseSelectionClient
+  model : String
 
 def OpenAIChatChoice.computeLogProbability (choice: OpenAIChatChoice) : Float :=
   match choice.logprobs with
@@ -25,15 +26,6 @@ def OpenAIChatChoice.computeLogProbability (choice: OpenAIChatChoice) : Float :=
 
 def OpenAIChatChoice.computeProbability (choice: OpenAIChatChoice) : Float :=
   Float.exp $ OpenAIChatChoice.computeLogProbability choice
-namespace Array
-
-def mapIdxM' {α : Type u} {β : Type v} {m : Type v → Type w} [Monad m] (f : Nat → α → m β) (as : Array α) : m (Array β) :=
-  as.mapIdxM fun i a => f i a
-
-def mapIdx' {α : Type u} {β : Type v} (f : Nat → α → β) (as : Array α) : Array β :=
-  Id.run <| as.mapIdxM' f
-
-end Array
 
 namespace TacticGenerator
 
@@ -47,7 +39,8 @@ def stripThinkingPrefix (s : String) : String :=
     else s
   else s
 
-def retryCoreM? {α : Type _} (action : CoreM α) (maxRetries : Nat := 3) : CoreM (Option α) := do
+def retryM? {α ε : Type} {m : Type → Type} [Monad m] [MonadExcept ε m]
+    (action : m α) (maxRetries : Nat := 3) : m (Option α) := do
   let mut result : Option α := none
   let mut i := 0
   while result.isNone && i < maxRetries do
@@ -73,7 +66,7 @@ def mkRelatedTheorem (_id: Nat) (ps : PremiseSelectionResult) : String :=
 def mkPrompt (tacticState : String) (relatedTheorems: Array PremiseSelectionResult) : String :=
   "User: Please generate a tactic in lean4 to solve the state.
 Here're some theorems that may be helpful:
-" ++ (Array.mapIdx' mkRelatedTheorem relatedTheorems |>.joinSep "\n") ++
+" ++ (relatedTheorems.mapIdx mkRelatedTheorem |>.joinSep "\n") ++
 "
 STATE:
 " ++ tacticState ++ "
@@ -86,6 +79,7 @@ def getClient : CoreM TacticGenerator := do
     llmClient := ⟨reap.policy_endpoint.get (← getOptions), reap.llm_api_key.get (← getOptions)⟩
     valueClient := ⟨reap.value_endpoint.get (← getOptions), reap.llm_api_key.get (← getOptions)⟩
     premiseSelectionClient := ⟨reap.ps_endpoint.get (← getOptions)⟩
+    model := reap.model.get (← getOptions)
   }
 
 deriving instance ToJson for OpenAIChatCompletionTokenLogprob, OpenAIChoiceLogprobs, OpenAIChatChoice, OpenAIChatResponse
@@ -94,28 +88,28 @@ structure ValueResult where
   score : Float
 deriving Inhabited, FromJson, ToJson
 
-def getRelatedTheorems (mvarIds : List MVarId) (ppGoal : String)
-    (opts : Options) : MetaM (Array PremiseSelectionResult) := do
+def getRelatedTheorems (config : ReapGenerationConfig) (mvarIds : List MVarId) (ppGoal : String) :
+    MetaM (Array PremiseSelectionResult) := do
   withLogWallClockTime "premise_select" (fun result => json%{ goal: $ppGoal, result: $result }) do
-    selectPremisesForGoals mvarIds (reap.num_premises.get opts)
+    selectPremisesForGoals mvarIds config.numPremises
 
-def mkChatRequest (opts : Options) (prompt : String) (n : Nat) : OpenAIChatRequest := {
-  model := reap.model.get opts
+def mkChatRequest (config : ReapGenerationConfig) (model : String) (prompt : String) (n : Nat) :
+    OpenAIChatRequest := {
+  model
   messages := [ { role := "user", content := prompt } ]
   n := n
-  temperature := (reap.temperature.get opts).toFloat / 100.0
-  max_tokens := reap.max_tokens.get opts
+  temperature := config.temperature
+  max_tokens := config.maxTokens
   logprobs := true
 }
 
-def generatePolicyFromPrompt (generator : TacticGenerator) (opts : Options)
+def generatePolicyFromPrompt (generator : TacticGenerator) (config : ReapGenerationConfig)
     (ppGoal : String) (relatedTheorems : Array PremiseSelectionResult) (prompt : String) :
     CoreM (Array (String × Float)) := do
-  -- let mut results : Std.HashSet String := Std.HashSet.emptyWithCapacity
   let mut results : List (String × Float) := []
-  let req := mkChatRequest opts prompt (reap.num_samples.get opts)
+  let req := mkChatRequest config generator.model prompt config.numSamples
   let res ← withLogWallClockTime "tactic_gen" (fun result => json%{ goal: $ppGoal, ps: $relatedTheorems, result: $result }) <|
-    retryCoreM? (generator.llmClient.generateChat req)
+    retryM? (generator.llmClient.generateChat req)
   if let some res := res then
     for result in (parseChatResponseOpenAI res) do
       results := results.insert result
@@ -124,12 +118,12 @@ def generatePolicyFromPrompt (generator : TacticGenerator) (opts : Options)
   else
     return #[]
 
-def generateValueFromPrompt (generator : TacticGenerator) (opts : Options)
+def generateValueFromPrompt (generator : TacticGenerator) (config : ReapGenerationConfig)
     (ppGoal : String) (relatedTheorems : Array PremiseSelectionResult) (prompt : String) :
     CoreM Float := do
-  let req := mkChatRequest opts prompt 1
+  let req := mkChatRequest config generator.model prompt 1
   let result : Option ValueResult ← withLogWallClockTime "value" (fun result => json%{ state: $ppGoal, ps: $relatedTheorems, result: $result }) do
-    retryCoreM? (maxRetries := 3) do
+    retryM? (maxRetries := 3) do
       let res ← generator.valueClient.generateChat req
       let res := parseChatResponseOpenAI res
       let res := Json.parse res[0]!.1
@@ -143,20 +137,47 @@ def generateValueFromPrompt (generator : TacticGenerator) (opts : Options)
   | some result => return -result.score
   | none => return -1000.0
 
+/-- Main function to generate tactics -/
+def generatePPTactics (config : ReapGenerationConfig) (mvarIds : List MVarId) (ppGoal : String) :
+    MetaM (Array PremiseSelectionResult × Array (String × Float)) := do
+  let generator ← getClient
+  let relatedTheorems ← getRelatedTheorems config mvarIds ppGoal
+  let prompt := mkPrompt ppGoal relatedTheorems
+  let tactics ← generatePolicyFromPrompt generator config ppGoal relatedTheorems prompt
+  return (relatedTheorems, tactics)
+
 def Meta.ppProofState (mvarIds : List MVarId) : MetaM Format := do
   return Std.Format.joinSep (← mvarIds.mapM (Meta.ppGoal)) "\n".toFormat
 
-def generatePolicyValue (mvarIds : List MVarId) :
-    MetaM <| Float × Array (String × Array PremiseSelectionResult × Float) := do
-  let opts ← getOptions
+
+def generateTactics (config : ReapGenerationConfig) (mvarIds : List MVarId) :
+    MetaM <| Array (String × Float) := do
+  let ppProofState := toString (← Meta.ppProofState mvarIds)
+  return (← generatePPTactics config mvarIds ppProofState).2
+
+def generateTacticsWithPremises (config : ReapGenerationConfig) (mvarIds : List MVarId) :
+    MetaM <| Array (String × Array PremiseSelectionResult × Float) := do
+  let ppProofState := toString (← Meta.ppProofState mvarIds)
+  let (ps, res) ← generatePPTactics config mvarIds ppProofState
+  return res.map fun (x, y) => (x, ps, y)
+
+def generateValue (config : ReapGenerationConfig) (mvarIds : List MVarId) : MetaM Float := do
   let generator ← getClient
   let ppProofState := toString (← Meta.ppProofState mvarIds)
-  let relatedTheorems ← getRelatedTheorems mvarIds ppProofState opts
+  let relatedTheorems ← getRelatedTheorems config mvarIds ppProofState
+  let prompt := mkPrompt ppProofState relatedTheorems
+  generateValueFromPrompt generator config ppProofState relatedTheorems prompt
+
+def generatePolicyValue (config : ReapGenerationConfig) (mvarIds : List MVarId) :
+    MetaM <| Float × Array (String × Array PremiseSelectionResult × Float) := do
+  let generator ← getClient
+  let ppProofState := toString (← Meta.ppProofState mvarIds)
+  let relatedTheorems ← getRelatedTheorems config mvarIds ppProofState
   let prompt := mkPrompt ppProofState relatedTheorems
   let (_, valueTask) ← Lean.Core.CoreM.asTask <|
-    generateValueFromPrompt generator opts ppProofState relatedTheorems prompt
+    generateValueFromPrompt generator config ppProofState relatedTheorems prompt
   let (_, policyTask) ← Lean.Core.CoreM.asTask <|
-    generatePolicyFromPrompt generator opts ppProofState relatedTheorems prompt
+    generatePolicyFromPrompt generator config ppProofState relatedTheorems prompt
   let value ← valueTask.get
   let tactics ← policyTask.get
   return (value, tactics.map fun (x, y) => (x, relatedTheorems, y))
