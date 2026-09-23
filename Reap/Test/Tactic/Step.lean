@@ -73,6 +73,15 @@ theorem evalTacticStr_accepts_trivial : True := by
   guardEvalRejects "repeat' trivial"
   guardEvalAccepts "trivial"
 
+theorem indirectlyAdmitted : True := by sorry
+
+theorem evalTacticStr_rejects_indirect_sorryAx : True := by
+  guardEvalRejects "exact indirectlyAdmitted"
+  trivial
+
+theorem evalTacticStr_accepts_classical_choice : True := by
+  guardEvalAccepts "exact Classical.choice (show Nonempty True from ⟨True.intro⟩)"
+
 theorem evalTacticStr_accepts_omega_nat_cancellation {m n k : Nat}
     (_hm : 2 ∣ m) (_meq : m = k * 2)
     (h : 2 * (2 * k ^ 2) = 2 * n ^ 2) : 2 * k ^ 2 = n ^ 2 := by
