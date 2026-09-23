@@ -34,15 +34,6 @@ def replaceAuxDeclFVars (lctx : LocalContext) (auxName : Name) (declName : Name)
       | none => none
     | _ => none
 
-def checkPreDefinitions (preDefs : Array PreDefinition) : TermElabM Bool := withoutModifyingState do
-  try
-    withOptions (Elab.async.set · false) do
-      withoutModifyingEnv do
-        addPreDefinitions (← getLCtx, ← getLocalInstances) preDefs
-    return !(← getThe Core.State).messages.hasErrors
-  catch _ =>
-    return false
-
 def getNonAuxFVars : MetaM (Array Expr) := do
   let lctx ← getLCtx
   return lctx.getFVars.filter fun x =>
@@ -84,6 +75,7 @@ inductive EvalError where
   | assignedProofHasMVarOrSorry
   | auxProofHasMVarOrSorry (declName : Name)
   | auxProofKernelCheckFailed (declName : Name) (message : String)
+  | unapprovedAxioms (axioms : Array Name)
   | finalProofCheckFailed
 deriving ToJson
 
@@ -175,6 +167,25 @@ partial def checkCurrentAuxDeclsInExpr (parentDeclName : Name) (e : Expr) (check
         | .error err => return .error err
   return .ok checked
 
+def approvedAxioms : Array Name := #[``propext, ``Classical.choice, ``Quot.sound]
+
+def checkPreDefinitions (preDefs : Array PreDefinition) : TacticM (EvalResult Unit) :=
+  withoutModifyingState do
+    try
+      let axioms ← withOptions (Elab.async.set · false) do
+        withoutModifyingEnv do
+          addPreDefinitions (← getLCtx, ← getLocalInstances) preDefs
+          preDefs.foldlM (init := #[]) fun axioms preDef =>
+            return axioms.append (← collectAxioms preDef.declName)
+      if (← getThe Core.State).messages.hasErrors then
+        return .error .finalProofCheckFailed
+      let unapproved := axioms.filter fun axiomName => !approvedAxioms.contains axiomName
+      if !unapproved.isEmpty then
+        return .error (.unapprovedAxioms unapproved)
+      return .ok ()
+    catch _ =>
+      return .error .finalProofCheckFailed
+
 def checkProof (ctx : ProofCheckContext) : TacticM (EvalResult Unit) := do
   let some parentDeclName ← Term.getDeclName? | return .ok ()
   let mut checked := #[]
@@ -194,9 +205,7 @@ def checkProof (ctx : ProofCheckContext) : TacticM (EvalResult Unit) := do
   for goal in ctx.originalGoals do
     let some preDef ← mkPreDefinition ctx.numSectionFVars goal | return .error .finalProofCheckFailed
     preDefs := preDefs.push preDef
-  if !(← checkPreDefinitions preDefs) then
-    return .error .finalProofCheckFailed
-  return .ok ()
+  checkPreDefinitions preDefs
 
 def isQuestionTacticKind (kind : SyntaxNodeKind) : Bool :=
   kind == `sorry || kind == `admit || kind == `Lean.Parser.Tactic.repeat' ||
