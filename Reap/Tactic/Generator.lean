@@ -106,17 +106,10 @@ def mkChatRequest (config : ReapGenerationConfig) (model : String) (prompt : Str
 def generatePolicyFromPrompt (generator : TacticGenerator) (config : ReapGenerationConfig)
     (ppGoal : String) (relatedTheorems : Array PremiseSelectionResult) (prompt : String) :
     CoreM (Array (String × Float)) := do
-  let mut results : List (String × Float) := []
   let req := mkChatRequest config generator.model prompt config.numSamples
   let res ← withLogWallClockTime "tactic_gen" (fun result => json%{ goal: $ppGoal, ps: $relatedTheorems, result: $result }) <|
     retryM? (generator.llmClient.generateChat req)
-  if let some res := res then
-    for result in (parseChatResponseOpenAI res) do
-      results := results.insert result
-    results := results.eraseDupsBy (fun x y => x.1 == y.1)
-    return results.toArray
-  else
-    return #[]
+  return res.map parseChatResponseOpenAI |>.getD #[]
 
 def generateValueFromPrompt (generator : TacticGenerator) (config : ReapGenerationConfig)
     (ppGoal : String) (relatedTheorems : Array PremiseSelectionResult) (prompt : String) :
