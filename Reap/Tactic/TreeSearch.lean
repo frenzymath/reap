@@ -365,7 +365,7 @@ def updateEdge (e : EdgeData) (value : Float) : EdgeData :=
 
 def backpropValueTowardsMin (node : NodeType) : Float :=
   Id.run do
-    let mut value := 1.0
+    let mut value := 0.0
     for (_, child) in node.children do
       if !child.isSolved && child.numVisit > 0 then
         value := min value child.value
@@ -374,14 +374,18 @@ def backpropValueTowardsMin (node : NodeType) : Float :=
 def backupValueForParent (node : NodeType) (value : Float) : Float :=
   match node.data.toPlay with
   | .orNode => value
-  | .andNode => backpropValueTowardsMin node
+  | .andNode => node.data.value
 
-def updateNode (node : NodeType) (value : Float) : NodeData :=
-  {
+def updateNode (node : NodeType) (value : Float) : NodeData := Id.run do
+  let numVisit := node.data.numVisit + 1
+  let valueSum := match node.data.toPlay with
+    | .orNode => node.data.valueSum + value
+    | .andNode => backpropValueTowardsMin node * numVisit.toFloat
+  return {
     node.data with
       isSolved := nodeSolved node
-      numVisit := node.data.numVisit + 1
-      valueSum := node.data.valueSum + value
+      numVisit
+      valueSum
   }
 
 def currentGoalType (node : NodeData) : TacticM String := do
