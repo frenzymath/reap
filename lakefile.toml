@@ -15,8 +15,14 @@ name = "batteries"
 scope = "leanprover-community"
 rev = "main"
 
+[[input_file]]
+name = "mctsProgressWidget"
+path = "Reap/Tactic/MCTSProgressWidget.js"
+text = true
+
 [[lean_lib]]
 name = "Reap"
+needs = ["mctsProgressWidget"]
 
 [[lean_lib]]
 name = "Reap.Test"
