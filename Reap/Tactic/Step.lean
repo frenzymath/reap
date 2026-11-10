@@ -11,20 +11,11 @@ public meta section
 namespace Reap.TreeSearch
 
 
-
-partial def collectAuxDeclNames (lctx : LocalContext) (e : Expr) (names : Array Name := #[]) : Array Name :=
-  match e with
-  | .fvar fvarId =>
+def collectAuxDeclNames (lctx : LocalContext) (e : Expr) : NameSet :=
+  (collectFVars {} e).fvarIds.foldl (init := {}) fun names fvarId =>
     match lctx.auxDeclToFullName.get? fvarId with
-    | some name => if names.contains name then names else names.push name
+    | some name => names.insert name
     | none => names
-  | .app f a => collectAuxDeclNames lctx a (collectAuxDeclNames lctx f names)
-  | .lam _ d b _ | .forallE _ d b _ =>
-    collectAuxDeclNames lctx b (collectAuxDeclNames lctx d names)
-  | .letE _ t v b _ =>
-    collectAuxDeclNames lctx b (collectAuxDeclNames lctx v (collectAuxDeclNames lctx t names))
-  | .mdata _ b | .proj _ _ b => collectAuxDeclNames lctx b names
-  | _ => names
 
 def replaceAuxDeclFVars (lctx : LocalContext) (auxName : Name) (declName : Name) (levelParams : List Name) (sectionVars : Array Expr) (e : Expr) : Expr :=
   e.replace fun
@@ -114,13 +105,14 @@ def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option Pre
       modify (·.collect checkedType)
       modify (·.collect checkedValue)
     let levelParams := levelParamState.params.toList
-    let auxNames := collectAuxDeclNames lctx value
-    let some value := (
-      match auxNames with
-      | #[] => some value
-      | #[auxName] => some <| replaceAuxDeclFVars lctx auxName declName levelParams sectionVars value
-      | _ => none
-    ) | return none
+    let auxNames := (collectAuxDeclNames lctx value).toList
+    if auxNames.length > 1 then
+      return none
+    let value :=
+      if let some auxName := auxNames.head? then
+        replaceAuxDeclFVars lctx auxName declName levelParams sectionVars value
+      else
+        value
     let type ← instantiateMVars checkedType
     let value ← instantiateMVars (← mkLambdaFVars xs value)
     if type.hasMVar || value.hasMVar then
@@ -138,22 +130,11 @@ def mkPreDefinition (numSectionVars : Nat) (goal : MVarId) : TacticM (Option Pre
       termination := .none
     }
 
-partial def collectConstNames (e : Expr) (names : Array Name := #[]) : Array Name :=
-  match e with
-  | .const name _ => if names.contains name then names else names.push name
-  | .app f a => collectConstNames a (collectConstNames f names)
-  | .lam _ d b _ | .forallE _ d b _ =>
-    collectConstNames b (collectConstNames d names)
-  | .letE _ t v b _ =>
-    collectConstNames b (collectConstNames v (collectConstNames t names))
-  | .mdata _ b | .proj _ _ b => collectConstNames b names
-  | _ => names
-
-partial def checkCurrentAuxDeclsInExpr (parentDeclName : Name) (e : Expr) (checked : Array Name := #[]) : TacticM (EvalResult (Array Name)) := do
+partial def checkCurrentAuxDeclsInExpr (parentDeclName : Name) (e : Expr) (checked : NameSet := {}) : TacticM (EvalResult NameSet) := do
   let mut checked := checked
-  for constName in collectConstNames e do
+  for constName in e.getUsedConstants do
     if parentDeclName.isPrefixOf constName && constName != parentDeclName && !checked.contains constName then
-      checked := checked.push constName
+      checked := checked.insert constName
       let info ← getConstInfo constName
       if let some value := info.value? then
         if value.hasSorry || value.hasExprMVar then
@@ -188,7 +169,7 @@ def checkPreDefinitions (preDefs : Array PreDefinition) : TacticM (EvalResult Un
 
 def checkProof (ctx : ProofCheckContext) : TacticM (EvalResult Unit) := do
   let some parentDeclName ← Term.getDeclName? | return .ok ()
-  let mut checked := #[]
+  let mut checked : NameSet := {}
 
   for g in ctx.originalGoals do
     if ← g.isAssigned then
