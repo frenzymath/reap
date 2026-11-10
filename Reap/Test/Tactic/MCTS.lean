@@ -98,7 +98,7 @@ def testConfig (maxGoals maxSteps : Nat) : ReapConfig := {
 }
 
 def runMCTSForTest (evalPolicyValue : PolicyValueEval) (config : ReapConfig) :
-    TacticM (Option Nat × Array (Node MCTS.NodeData (MCTS.EdgeData × Nat))) := unsafe do
+    TacticM (Option Nat × Array (Node MCTS.NodeData (MCTS.EdgeData × Nat))) := do
   let ctx ← mkProofCheckContext
   MCTS.monteCarloTreeSearch ctx evalPolicyValue config (← MCTS.NodeData.fromState) none
 
