@@ -37,8 +37,6 @@ def simplifyState : TacticM Unit := do
 
 abbrev StateKey := String
 
-example : Hashable StateKey := inferInstance
-
 def stateKey : TacticM StateKey := do
   let goals ← getUnsolvedGoals
   let pp ← goals.toArray.mapM fun goal => do

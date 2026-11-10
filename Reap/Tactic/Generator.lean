@@ -13,7 +13,6 @@ open Reap.WallClock
 structure TacticGenerator where
   llmClient : OpenAIClient
   valueClient : OpenAIClient
-  premiseSelectionClient : PremiseSelectionClient
   model : String
 
 def OpenAIChatChoice.computeLogProbability (choice: OpenAIChatChoice) : Float :=
@@ -23,9 +22,6 @@ def OpenAIChatChoice.computeLogProbability (choice: OpenAIChatChoice) : Float :=
     match choice_logprobs.content with
     | none => 0.0
     | some logProbs => (logProbs.map fun x => x.logprob).sum
-
-def OpenAIChatChoice.computeProbability (choice: OpenAIChatChoice) : Float :=
-  Float.exp $ OpenAIChatChoice.computeLogProbability choice
 
 namespace TacticGenerator
 
@@ -51,13 +47,10 @@ def retryM? {α ε : Type} {m : Type → Type} [Monad m] [MonadExcept ε m]
       pure ()
   return result
 
-def parseCompletionResponseOpenAI (res: OpenAICompletionResponse) : Array String :=
-  (res.choices.map fun x => (x.text)).toArray
-
 def parseChatResponseOpenAI (res: OpenAIChatResponse) : Array (String × Float) :=
   (res.choices.map fun x => (stripThinkingPrefix x.message.content, x.computeLogProbability)).toArray
 
-def mkRelatedTheorem (_id: Nat) (ps : PremiseSelectionResult) : String :=
+def mkRelatedTheorem (ps : PremiseSelectionResult) : String :=
   let formalName := ps.formal_name
   let formalStatement := ps.formal_statement
   "Formal name: " ++ formalName ++ "\n" ++
@@ -66,7 +59,7 @@ def mkRelatedTheorem (_id: Nat) (ps : PremiseSelectionResult) : String :=
 def mkPrompt (tacticState : String) (relatedTheorems: Array PremiseSelectionResult) : String :=
   "User: Please generate a tactic in lean4 to solve the state.
 Here're some theorems that may be helpful:
-" ++ (relatedTheorems.mapIdx mkRelatedTheorem |>.joinSep "\n") ++
+" ++ (relatedTheorems.map mkRelatedTheorem |>.joinSep "\n") ++
 "
 STATE:
 " ++ tacticState ++ "
@@ -78,7 +71,6 @@ def getClient : CoreM TacticGenerator := do
   return {
     llmClient := ⟨reap.policy_endpoint.get (← getOptions), reap.llm_api_key.get (← getOptions)⟩
     valueClient := ⟨reap.value_endpoint.get (← getOptions), reap.llm_api_key.get (← getOptions)⟩
-    premiseSelectionClient := ⟨reap.ps_endpoint.get (← getOptions)⟩
     model := reap.model.get (← getOptions)
   }
 
@@ -130,36 +122,8 @@ def generateValueFromPrompt (generator : TacticGenerator) (config : ReapGenerati
   | some result => return -result.score
   | none => return -1000.0
 
-/-- Main function to generate tactics -/
-def generatePPTactics (config : ReapGenerationConfig) (mvarIds : List MVarId) (ppGoal : String) :
-    MetaM (Array PremiseSelectionResult × Array (String × Float)) := do
-  let generator ← getClient
-  let relatedTheorems ← getRelatedTheorems config mvarIds ppGoal
-  let prompt := mkPrompt ppGoal relatedTheorems
-  let tactics ← generatePolicyFromPrompt generator config ppGoal relatedTheorems prompt
-  return (relatedTheorems, tactics)
-
 def Meta.ppProofState (mvarIds : List MVarId) : MetaM Format := do
   return Std.Format.joinSep (← mvarIds.mapM (Meta.ppGoal)) "\n".toFormat
-
-
-def generateTactics (config : ReapGenerationConfig) (mvarIds : List MVarId) :
-    MetaM <| Array (String × Float) := do
-  let ppProofState := toString (← Meta.ppProofState mvarIds)
-  return (← generatePPTactics config mvarIds ppProofState).2
-
-def generateTacticsWithPremises (config : ReapGenerationConfig) (mvarIds : List MVarId) :
-    MetaM <| Array (String × Array PremiseSelectionResult × Float) := do
-  let ppProofState := toString (← Meta.ppProofState mvarIds)
-  let (ps, res) ← generatePPTactics config mvarIds ppProofState
-  return res.map fun (x, y) => (x, ps, y)
-
-def generateValue (config : ReapGenerationConfig) (mvarIds : List MVarId) : MetaM Float := do
-  let generator ← getClient
-  let ppProofState := toString (← Meta.ppProofState mvarIds)
-  let relatedTheorems ← getRelatedTheorems config mvarIds ppProofState
-  let prompt := mkPrompt ppProofState relatedTheorems
-  generateValueFromPrompt generator config ppProofState relatedTheorems prompt
 
 def generatePolicyValue (config : ReapGenerationConfig) (mvarIds : List MVarId) :
     MetaM <| Float × Array (String × Array PremiseSelectionResult × Float) := do
