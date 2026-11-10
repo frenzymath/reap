@@ -381,7 +381,7 @@ def reportProgress? (progress? : Option ProgressReporter) (step maxNodes maxStep
         status
       }
 
-unsafe def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
+partial def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
     (config : ReapConfig) (ancestorKeys : Std.HashSet StateKey)
     (nodeIdx : Nat) (progress? : Option ProgressReporter) (step : Nat) :
     SearchM Float := do
@@ -413,7 +413,7 @@ unsafe def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValue
       let node ← resolve (← getNode! nodeIdx)
       return backupValueForParent node value
 
-unsafe def monteCarloTreeSearch (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
+def monteCarloTreeSearch (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
     (config : ReapConfig) (start : NodeData)
     (progress? : Option ProgressReporter) :
     TacticM (Option Nat × Array (Node NodeData (EdgeData × Nat))) :=
@@ -535,7 +535,7 @@ structure MCTSResult where
 
 open MCTS in
 def runMCTS (evalPolicyValue : PolicyValueEval) (config : ReapConfig)
-    (progress? : Option ProgressReporter) : TacticM MCTSResult := unsafe do
+    (progress? : Option ProgressReporter) : TacticM MCTSResult := do
   let opts ← getOptions
   let path := reap.wall_clock_log_path.get opts
   if !path.isEmpty then
@@ -565,7 +565,7 @@ def checkProofScript (limits : ReapStepLimitsConfig) (ctx : ProofCheckContext) (
     | .error err => return .error err
 
 open MCTS in
-def reapMCTS (evalPolicyValue : PolicyValueEval) (config : ReapConfig) : TacticM Unit := unsafe do
+def reapMCTS (evalPolicyValue : PolicyValueEval) (config : ReapConfig) : TacticM Unit := do
   let result ← runMCTS evalPolicyValue config none
 
   if result.solution?.isSome then
