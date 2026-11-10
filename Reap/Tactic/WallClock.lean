@@ -1,5 +1,6 @@
 module
 public meta import Lean
+public meta import Reap.Options
 
 public meta section
 
@@ -7,20 +8,15 @@ open Lean Elab Tactic
 
 namespace Reap.WallClock
 
-initialize wallClockLogFile : IO.Ref (Option IO.FS.Handle) ← IO.mkRef none
-
 variable {m : Type _ → Type _} [Monad m] [MonadLiftT IO m]
 
-def appendLogRecord (record : Json) : m Unit := liftM (m := IO) do
-  if let some f ← wallClockLogFile.get then
+def appendLogRecord (logConfig : ReapLogConfig) (record : Json) : m Unit := liftM (m := IO) do
+  if let some f := logConfig.wallClock then
     f.putStrLn record.compress
     f.flush
 
-def openLogFile (path : System.FilePath) : m Unit := liftM (m := IO) do
-  let f ← IO.FS.Handle.mk path .append
-  wallClockLogFile.set f
-
-def withLogWallClockTime {α : Type _} (name : String) (extraFun : α → Json) (act : m α) : m α := do
+def withLogWallClockTime {α : Type _} (logConfig : ReapLogConfig) (name : String)
+    (extraFun : α → Json) (act : m α) : m α := do
   let start ← IO.monoNanosNow.toIO
   let result ← act
   let stop ← IO.monoNanosNow.toIO
@@ -30,5 +26,5 @@ def withLogWallClockTime {α : Type _} (name : String) (extraFun : α → Json) 
     stop: $stop,
     extra: $(extraFun result)
   }
-  appendLogRecord record
+  appendLogRecord logConfig record
   return result

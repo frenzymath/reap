@@ -100,7 +100,7 @@ def testConfig (maxGoals maxSteps : Nat) : ReapConfig := {
 def runMCTSForTest (evalPolicyValue : PolicyValueEval) (config : ReapConfig) :
     TacticM (Option Nat × Array (Node MCTS.NodeData (MCTS.EdgeData × Nat))) := do
   let ctx ← mkProofCheckContext
-  MCTS.monteCarloTreeSearch ctx evalPolicyValue config (← MCTS.NodeData.fromState) none
+  MCTS.monteCarloTreeSearch ctx evalPolicyValue {} config (← MCTS.NodeData.fromState) none
 
 def childTacticStrings (node : Node MCTS.NodeData (MCTS.EdgeData × Nat)) : Array String :=
   node.children.map fun (edge, _) => edge.tacticStr
@@ -116,7 +116,7 @@ def guardProofScriptEquals
 
 def guardProofScriptChecks (limits : ReapStepLimitsConfig) (ctx : ProofCheckContext)
     (script : String) : TacticM Unit := do
-  match ← checkProofScript limits ctx script with
+  match ← checkProofScript {} limits ctx script with
   | .ok _ => pure ()
   | .error err => throwError "generated proof script failed checking: {(toJson err).compress}"
 
@@ -200,7 +200,7 @@ example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
     let progressRef ← IO.mkRef #[]
     let report : ProgressReporter := fun progress => do
       progressRef.modify fun progressValues => progressValues.push progress
-    let result ← runMCTS andOrPolicyValue (testConfig 32 32) (some report)
+    let result ← runMCTS andOrPolicyValue {} (testConfig 32 32) (some report)
     saved.restore
     unless result.solution?.isSome do
       throwError "expected MCTS to solve conjunction"
@@ -242,10 +242,10 @@ example : True := by
   trivial
 
 example (a b c : Nat) (h1 : a = b) (h2 : b = c) : a = c := by
-  run_tac reapMCTS transPolicyValue (testConfig 32 32)
+  run_tac reapMCTS transPolicyValue {} (testConfig 32 32)
 
 example (P Q : Prop) (hP : P) (hQ : Q) : P ∧ Q := by
-  run_tac reapMCTS andOrPolicyValue (testConfig 32 32)
+  run_tac reapMCTS andOrPolicyValue {} (testConfig 32 32)
 
 example : ∃ n : Nat, n = n := by
-  run_tac reapMCTS existsPolicyValue (testConfig 32 32)
+  run_tac reapMCTS existsPolicyValue {} (testConfig 32 32)

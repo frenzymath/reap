@@ -14,8 +14,8 @@ public meta section
 
 namespace Reap.TreeSearch
 
-def writeRawTree (path : String) (obj : Json) : IO Unit := do
-  if !path.isEmpty then
+def writeRawTree (path : Option System.FilePath) (obj : Json) : IO Unit := do
+  if let some path := path then
     IO.FS.withFile path .write fun h =>
       h.putStrLn obj.compress
 
@@ -179,7 +179,8 @@ def updateDuplicateChild (nodeIdx childPos : Nat) (childData : NodeData) : Searc
     let childRef ← getNode! childIdx
     setAtT childIdx { childRef with data := { childRef.data with isSolved := childRef.data.isSolved || childData.isSolved } }
 
-def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval) (config : ReapConfig)
+def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
+    (logConfig : ReapLogConfig) (config : ReapConfig)
     (ancestorKeys : Std.HashSet StateKey)
     (nodeIdx : Nat) (node : NodeType) : SearchM Float := do
   if node.data.toPlay == .andNode then
@@ -210,9 +211,9 @@ def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval) (con
           -- A focused AND-child may close a goal using declarations whose
           -- proof obligations are sibling AND-children. The whole replay is
           -- final-checked after every child is solved.
-          evalTacticStr config.limits.step none t
+          evalTacticStr logConfig config.limits.step none t
       | none =>
-          evalTacticStr config.limits.step (some (node.data.proofCheckContext ctx)) t
+          evalTacticStr logConfig config.limits.step (some (node.data.proofCheckContext ctx)) t
     if result.isOk then
       let probability := (prior / config.mcts.priorTemperature).exp
       let childKind ← childKindAfterTactic
@@ -382,7 +383,7 @@ def reportProgress? (progress? : Option ProgressReporter) (step maxNodes maxStep
       }
 
 partial def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
-    (config : ReapConfig) (ancestorKeys : Std.HashSet StateKey)
+    (logConfig : ReapLogConfig) (config : ReapConfig) (ancestorKeys : Std.HashSet StateKey)
     (nodeIdx : Nat) (progress? : Option ProgressReporter) (step : Nat) :
     SearchM Float := do
   let maxNodes := config.limits.total.maxGoals
@@ -392,14 +393,14 @@ partial def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValu
   match selectChild config.mcts node with
   | none =>
       let goalType ← currentGoalType node.data
-      let value ← visitNode ctx evalPolicyValue config ancestorKeys nodeIdx node
+      let value ← visitNode ctx evalPolicyValue logConfig config ancestorKeys nodeIdx node
       reportProgress? progress? step maxNodes maxSteps goalType false false "running"
       return value
   | some childPos =>
       let (_, childIdx) ← getChild! x childPos
       let childRef ← getNode! childIdx
       let childValue ←
-        reapMCTSStep ctx evalPolicyValue config (ancestorKeys.insert childRef.data.key) childIdx
+        reapMCTSStep ctx evalPolicyValue logConfig config (ancestorKeys.insert childRef.data.key) childIdx
           progress? step
       let x ← getNode! nodeIdx
       let (edge, childIdx) ← getChild! x childPos
@@ -414,7 +415,7 @@ partial def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValu
       return backupValueForParent node value
 
 def monteCarloTreeSearch (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
-    (config : ReapConfig) (start : NodeData)
+    (logConfig : ReapLogConfig) (config : ReapConfig) (start : NodeData)
     (progress? : Option ProgressReporter) :
     TacticM (Option Nat × Array (Node NodeData (EdgeData × Nat))) :=
   StateT.run (s := #[ { data := start } ]) do
@@ -422,7 +423,7 @@ def monteCarloTreeSearch (ctx : ProofCheckContext) (evalPolicyValue : PolicyValu
   let maxSteps := config.limits.total.maxSteps
     let mut step := 0
     while (← get).size <= maxNodes && step < maxSteps do
-      discard <| reapMCTSStep ctx evalPolicyValue config {start.key} 0 progress? step
+      discard <| reapMCTSStep ctx evalPolicyValue logConfig config {start.key} 0 progress? step
       let root ← getNode! 0
       if root.data.isSolved then
         reportProgress? progress? (step + 1) maxNodes maxSteps "no goals" true true "solved"
@@ -500,7 +501,7 @@ partial def proofScriptForSolvedNode
         bullets := bullets.push (renderBullet (← proofScriptForSolvedNode nodes childIdx))
       return String.intercalate "\n" bullets.toList
 
-partial def replaySolvedNode (limits : ReapStepLimitsConfig) (ctx : ProofCheckContext)
+partial def replaySolvedNode (logConfig : ReapLogConfig) (limits : ReapStepLimitsConfig) (ctx : ProofCheckContext)
     (nodes : Array (Node NodeData (EdgeData × Nat))) (nodeIdx : Nat) : TacticM Unit := do
   let some node := nodes[nodeIdx]? | throwError "MCTS proof replay node index out of bounds: {nodeIdx}"
   match node.data.toPlay with
@@ -509,8 +510,8 @@ partial def replaySolvedNode (limits : ReapStepLimitsConfig) (ctx : ProofCheckCo
         return ()
       let some (edge, childIdx) := solvedOrChild? nodes node
         | throwError "MCTS proof replay could not find a solved OR child"
-      match ← evalTacticStr limits none edge.tacticStr with
-      | .ok _ => replaySolvedNode limits ctx nodes childIdx
+      match ← evalTacticStr logConfig limits none edge.tacticStr with
+      | .ok _ => replaySolvedNode logConfig limits ctx nodes childIdx
       | .error err => throwError "MCTS proof replay failed on tactic {edge.tacticStr}: {(toJson err).compress}"
   | .andNode =>
       let goals := (← getUnsolvedGoals).toArray
@@ -520,7 +521,7 @@ partial def replaySolvedNode (limits : ReapStepLimitsConfig) (ctx : ProofCheckCo
         let some goal := goals[edge.focusIndex]? | throwError "MCTS proof replay focus index out of bounds: {edge.focusIndex}"
         if !(← goal.isAssigned) then
           setGoals [goal]
-          replaySolvedNode limits ctx nodes childIdx
+          replaySolvedNode logConfig limits ctx nodes childIdx
       setGoals goals.toList
       pruneSolvedGoals
 
@@ -534,22 +535,18 @@ structure MCTSResult where
   info : Json
 
 open MCTS in
-def runMCTS (evalPolicyValue : PolicyValueEval) (config : ReapConfig)
+def runMCTS (evalPolicyValue : PolicyValueEval) (logConfig : ReapLogConfig) (config : ReapConfig)
     (progress? : Option ProgressReporter) : TacticM MCTSResult := do
-  let opts ← getOptions
-  let path := reap.wall_clock_log_path.get opts
-  if !path.isEmpty then
-    openLogFile <| .mk path
   let ctx ← mkProofCheckContext
   let (k, nodes) ←
-    MCTS.monteCarloTreeSearch ctx evalPolicyValue config (← NodeData.fromState) progress?
+    MCTS.monteCarloTreeSearch ctx evalPolicyValue logConfig config (← NodeData.fromState) progress?
 
   let ppNodes ← nodes.mapM (ppNode config.mcts nodes)
   let info := json%{
     solution : $k,
     nodes : $ppNodes
   }
-  writeRawTree (reap.raw_tree_path.get opts) info
+  writeRawTree logConfig.rawTree info
   return {
     ctx := ctx
     solution? := k
@@ -557,21 +554,22 @@ def runMCTS (evalPolicyValue : PolicyValueEval) (config : ReapConfig)
     info := info
   }
 
-def checkProofScript (limits : ReapStepLimitsConfig) (ctx : ProofCheckContext) (script : String) :
+def checkProofScript (logConfig : ReapLogConfig) (limits : ReapStepLimitsConfig) (ctx : ProofCheckContext) (script : String) :
     TacticM (EvalResult Unit) :=
   withoutModifyingState do
-    match ← evalTacticStr limits none (MCTS.wrapProofScriptAsTactic script) with
+    match ← evalTacticStr logConfig limits none (MCTS.wrapProofScriptAsTactic script) with
     | .ok _ => checkProof ctx
     | .error err => return .error err
 
 open MCTS in
-def reapMCTS (evalPolicyValue : PolicyValueEval) (config : ReapConfig) : TacticM Unit := do
-  let result ← runMCTS evalPolicyValue config none
+def reapMCTS (evalPolicyValue : PolicyValueEval) (logConfig : ReapLogConfig) (config : ReapConfig) :
+    TacticM Unit := do
+  let result ← runMCTS evalPolicyValue logConfig config none
 
   if result.solution?.isSome then
     let some root := result.nodes[0]? | throwError "MCTS result has no root node"
     root.data.state.restore
-    replaySolvedNode config.limits.step result.ctx result.nodes 0
+    replaySolvedNode logConfig config.limits.step result.ctx result.nodes 0
     match ← checkProof result.ctx with
     | .ok _ => return ()
     | .error err => throwError "MCTS final proof check failed after replay: {(toJson err).compress}"
