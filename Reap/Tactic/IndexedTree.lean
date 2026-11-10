@@ -21,9 +21,6 @@ variable {σ : Type} {m : Type → Type} [Monad m]
 def pushT (x : σ) : StateT (Array σ) m Nat :=
   .modifyGet fun a => (a.size, a.push x)
 
-def getAtT (i : Nat) (d : σ) : StateT (Array σ) m σ := do
-  return (← get)[i]?.getD d
-
 def getsAtT {τ : Type} (i : Nat) (f : σ → τ) (d : τ) : StateT (Array σ) m τ := do
   return (← get)[i]?.elim d f
 
@@ -51,12 +48,6 @@ def pushChildT (parentIdx : Nat) (edge : ε) (childData : σ) : SearchM Nat := d
   if let some parent := nodes[parentIdx]? then
     setAtT parentIdx { parent with children := parent.children.push (edge, childIdx) }
   return childIdx
-
-def pushChildrenT (parentIdx : Nat) (children : Array (ε × σ)) : SearchM (Array Nat) := do
-  let mut childIndices := #[]
-  for (edge, childData) in children do
-    childIndices := childIndices.push (← pushChildT parentIdx edge childData)
-  return childIndices
 
 end
 

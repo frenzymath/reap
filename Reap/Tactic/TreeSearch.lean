@@ -19,17 +19,6 @@ def writeRawTree (path : String) (obj : Json) : IO Unit := do
     IO.FS.withFile path .write fun h =>
       h.putStrLn obj.compress
 
-def getGoalTypes : TacticM (Option (Array Expr)) := do
-  let goals ← getUnsolvedGoals
-  let mut goalTypes := #[]
-  for g in goals do
-    let t ← g.getTypeCleanup
-    if t.hasExprMVar then
-      return none
-    else
-      goalTypes := goalTypes.push t
-  return some goalTypes
-
 def goalContainsExprMVar (goal : MVarId) : TacticM Bool := goal.withContext do
   let target ← goal.getTypeCleanup
   if target.hasExprMVar then
@@ -43,23 +32,6 @@ def goalContainsExprMVar (goal : MVarId) : TacticM Bool := goal.withContext do
       if value.hasExprMVar then
         return true
   return false
-
-def anyGoalContainsExprMVar (goals : List MVarId) : TacticM Bool := do
-  for goal in goals do
-    if ← goalContainsExprMVar goal then
-      return true
-  return false
-
-def unifyTypes (t₁ t₂ : Array Expr) : TacticM Bool := do
-  let mut ret := true
-  let mut t₂' := t₂
-  for t in t₁ do
-    if let some i ← t₂'.findIdxM? fun t' => Meta.isDefEqGuarded t t' then
-      t₂' := t₂'.eraseIdx! i
-    else
-      ret := false
-      break
-  return ret
 
 abbrev PolicyValueEval := List MVarId → MetaM (Float × Array (String × Array PremiseSelectionResult × Float))
 
@@ -129,10 +101,6 @@ def value (node : NodeData) : Float :=
 
 def restore (node : NodeData) : TacticM Unit :=
   node.state.restore
-
-def isTerminal (node : NodeData) : TacticM Bool := do
-  node.restore
-  return (← getUnsolvedGoals).isEmpty
 
 def proofCheckContext (node : NodeData) (ctx : ProofCheckContext) : ProofCheckContext :=
   match node.partialGoal with
