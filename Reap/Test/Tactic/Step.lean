@@ -26,14 +26,14 @@ elab "print_syntax_tree " s:str : tactic => do
 
 elab "guardEvalAccepts " s:str : tactic => do
   let ctx ← mkProofCheckContext
-  match ← evalTacticStr evalTestLimits (some ctx) s.getString with
+  match ← evalTacticStr {} evalTestLimits (some ctx) s.getString with
   | .ok _ => pure ()
   | .error err => throwError "expected tactic to be accepted, got: {toString err}"
 
 elab "guardEvalRejects " s:str : tactic => do
   withoutModifyingState do
     let ctx ← mkProofCheckContext
-    let result ← evalTacticStr evalTestLimits (some ctx) s.getString
+    let result ← evalTacticStr {} evalTestLimits (some ctx) s.getString
     if result.isOk then
       throwError "expected tactic to be rejected"
 

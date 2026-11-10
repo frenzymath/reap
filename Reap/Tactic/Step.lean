@@ -248,15 +248,15 @@ def checkMessages (messages : List Message) : TacticM (EvalResult Unit) := do
     return .error (.tacticErrorMessages (← messages.filterMapM fun x => if x.severity != .information then x.serialize else return none))
   return .ok ()
 
-def evalTacticStr (limits : ReapStepLimitsConfig) (checkCtx? : Option ProofCheckContext)
+def evalTacticStr (logConfig : ReapLogConfig) (limits : ReapStepLimitsConfig) (checkCtx? : Option ProofCheckContext)
     (str : String) : TacticM (EvalResult Unit) := do
   let state := toString <| ← TacticGenerator.Meta.ppProofState (← getGoals)
-  appendLogRecord (json%{
+  appendLogRecord logConfig (json%{
     name: "tactic_eval_pre",
     start: $(← IO.monoNanosNow.toIO),
     extra: { state: $state, tactic: $str }
   })
-  withLogWallClockTime "tactic_eval" (fun result => json%{ state: $state, tactic: $str, result: $result }) <| ExceptT.run do
+  withLogWallClockTime logConfig "tactic_eval" (fun result => json%{ state: $state, tactic: $str, result: $result }) <| ExceptT.run do
     let stx ← parseTacticStr str
     checkTacticSyntax stx
     let messages ← runTacticSyntax stx limits.heartbeats limits.timeout

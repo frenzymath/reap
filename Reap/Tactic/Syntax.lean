@@ -130,11 +130,13 @@ def addMCTSProgressWidget (tacRef : Syntax) (id : Nat)
 
 elab "reap" config:Lean.Parser.Tactic.optConfig : tactic => do
   let config ← elabReapConfig config
-  Reap.TreeSearch.reapMCTS (TacticGenerator.generatePolicyValue config.generation) config
+  let logConfig ← ReapLogConfig.fromOptions (← getOptions)
+  Reap.TreeSearch.reapMCTS (TacticGenerator.generatePolicyValue logConfig config.generation) logConfig config
 
 elab "reap?" config:Lean.Parser.Tactic.optConfig : tactic => do
   let stx ← getRef
   let config ← elabReapConfig config
+  let logConfig ← ReapLogConfig.fromOptions (← getOptions)
   let progressId ← freshReapMCTSProgressId
   let initialProgress := ReapMCTSProgressView.initial
     config.limits.total.maxGoals config.limits.total.maxSteps
@@ -157,7 +159,7 @@ elab "reap?" config:Lean.Parser.Tactic.optConfig : tactic => do
     try
       let saved ← saveState
       let result ← Reap.TreeSearch.runMCTS
-        (TacticGenerator.generatePolicyValue config.generation) config
+        (TacticGenerator.generatePolicyValue logConfig config.generation) logConfig config
         (some reportProgress)
       saved.restore
       match result.solution? with
@@ -168,7 +170,7 @@ elab "reap?" config:Lean.Parser.Tactic.optConfig : tactic => do
           | .error _ =>
               markDone false "failed" "proof script extraction failed"
           | .ok script =>
-              match ← Reap.TreeSearch.checkProofScript config.limits.step result.ctx script with
+              match ← Reap.TreeSearch.checkProofScript logConfig config.limits.step result.ctx script with
               | .ok _ =>
                   markDone true "solved" "no goals" (some (← formatTryThisText stx script))
               | .error _ =>

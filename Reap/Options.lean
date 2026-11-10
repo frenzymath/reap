@@ -54,6 +54,21 @@ structure ReapConfig where
   /-- MCTS hyperparameters. -/
   mcts : ReapMCTSConfig := {}
 
+/--
+Unlike `ReapConfig` and its sub-structures, this is not parsed from tactic
+syntax. It is built once per run from the `reap.wall_clock_log_path` and
+`reap.raw_tree_path` options by `ReapLogConfig.fromOptions`, and it holds
+runtime state (an open file handle), not tuning parameters. It is passed
+alongside `ReapConfig` and never inside it.
+-/
+structure ReapLogConfig where
+  /-- Open handle for wall-clock JSONL records, appended throughout the run.
+  `none` disables logging. -/
+  wallClock : Option IO.FS.Handle := none
+  /-- Path for the raw MCTS tree, opened only when the tree is written at the
+  end of the run. `none` disables export. -/
+  rawTree : Option System.FilePath := none
+
 register_option reap.ps_endpoint : String :=
   { defValue := "<premise_selection_endpoint>"
     descr := "Endpoint for the premise selection service." }
@@ -81,3 +96,15 @@ register_option reap.wall_clock_log_path : String :=
 register_option reap.raw_tree_path : String :=
   { defValue := ""
     descr := "Optional JSON path for the final raw MCTS tree. Empty disables file export." }
+
+def optionalFilePath (path : String) : Option System.FilePath :=
+  if path.isEmpty then none else some path
+
+def openOptionalHandle (path : String) : IO (Option IO.FS.Handle) :=
+  (optionalFilePath path).mapM (IO.FS.Handle.mk · .append)
+
+def ReapLogConfig.fromOptions (opts : Lean.Options) : IO ReapLogConfig := do
+  return {
+    wallClock := ← openOptionalHandle (reap.wall_clock_log_path.get opts)
+    rawTree := optionalFilePath (reap.raw_tree_path.get opts)
+  }
