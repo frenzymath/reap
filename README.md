@@ -1,12 +1,10 @@
 # Reap Tactic
 
-Use `reap` tactic to leverage the power of neural prover in your formal proof.
+Observable, general purpose MCTS tactic for use with neural provers.
 
-<video controls src="https://github.com/user-attachments/assets/9ca983ea-24bb-4b84-a676-919431787ac1" width="100%"></video>
+Paper: [Reap: Uncovering Monte Carlo proof search with a lightweight model](https://arxiv.org/abs/2611.02678)
 
-## Introduction
-
-The `reap` tactic extends our algebra & research level step-prover [Real-Prover](https://arxiv.org/abs/2505.20613) into a unified framework for proof-writing and training rollouts.
+Model: [Reaper-1](https://huggingface.co/FrenzyMath/Reaper-1)
 
 ## Installation
 
@@ -50,7 +48,7 @@ name = "mathlib"
 scope = "leanprover-community"
 ```
 
-Currently, our model is trained with Mathlib at `v4.28.0-rc1`, and `reap` is compatible with up to `v4.30.0`. As we are working on bridging version gap and further improvements, any feedbacks are welcomed.
+Currently, our model is trained with Mathlib at `v4.28.0-rc1`, and `reap` is compatible with up to `v4.30.0`. As we are working on bridging version gap and further improvements, any feedbacks are welcome.
 
 ### Using our mathlib4 fork
 
