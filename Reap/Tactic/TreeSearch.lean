@@ -123,12 +123,12 @@ abbrev NodeType := Node NodeData (EdgeData × NodeData)
 
 abbrev SearchM := IndexedTreeT NodeData EdgeData TacticM
 
-def getNode! (nodeIdx : Nat) : SearchM (Node NodeData (EdgeData × Nat)) := do
+def getNode (nodeIdx : Nat) : SearchM (Node NodeData (EdgeData × Nat)) := do
   let nodes ← get
   let some node := nodes[nodeIdx]? | throwError "MCTS node index out of bounds: {nodeIdx}"
   return node
 
-def getChild! (node : Node NodeData (EdgeData × Nat)) (childPos : Nat) :
+def getChild (node : Node NodeData (EdgeData × Nat)) (childPos : Nat) :
     SearchM (EdgeData × Nat) := do
   let some child := node.children[childPos]?
     | throwError "MCTS child index out of bounds: requested {childPos}, node has {node.children.size} children"
@@ -140,7 +140,7 @@ def nodeSolved (node : NodeType) : Bool :=
   | .andNode => node.data.isSolved || (!node.children.isEmpty && node.children.all fun (_, child) => child.isSolved)
 
 def refreshNodeSolved (nodeIdx : Nat) : SearchM Unit := do
-  let nodeRef ← getNode! nodeIdx
+  let nodeRef ← getNode nodeIdx
   let node ← resolve nodeRef
   setAtT nodeIdx { nodeRef with data := { nodeRef.data with isSolved := nodeSolved node } }
 
@@ -174,9 +174,9 @@ def childKindAfterTactic : TacticM NodeKind := do
   return .andNode
 
 def updateDuplicateChild (nodeIdx childPos : Nat) (childData : NodeData) : SearchM Unit := do
-  let nodeRef ← getNode! nodeIdx
+  let nodeRef ← getNode nodeIdx
   if let some (_, childIdx) := nodeRef.children[childPos]? then
-    let childRef ← getNode! childIdx
+    let childRef ← getNode childIdx
     setAtT childIdx { childRef with data := { childRef.data with isSolved := childRef.data.isSolved || childData.isSolved } }
 
 def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
@@ -219,7 +219,7 @@ def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
       let childKind ← childKindAfterTactic
       let childData ← NodeData.fromState childKind node.data.partialGoal
       if !ancestorKeys.contains childData.key then
-        let parentRef ← getNode! nodeIdx
+        let parentRef ← getNode nodeIdx
         let parent ← resolve parentRef
         if let some ((e, c), childPos) := parent.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == childData.key then
           let e' := { e with probability := e.probability + probability }
@@ -388,7 +388,7 @@ partial def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValu
     SearchM Float := do
   let maxNodes := config.limits.total.maxGoals
   let maxSteps := config.limits.total.maxSteps
-  let x ← getNode! nodeIdx
+  let x ← getNode nodeIdx
   let node ← resolve x
   match selectChild config.mcts node with
   | none =>
@@ -397,21 +397,21 @@ partial def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValu
       reportProgress? progress? step maxNodes maxSteps goalType false false "running"
       return value
   | some childPos =>
-      let (_, childIdx) ← getChild! x childPos
-      let childRef ← getNode! childIdx
+      let (_, childIdx) ← getChild x childPos
+      let childRef ← getNode childIdx
       let childValue ←
         reapMCTSStep ctx evalPolicyValue logConfig config (ancestorKeys.insert childRef.data.key) childIdx
           progress? step
-      let x ← getNode! nodeIdx
-      let (edge, childIdx) ← getChild! x childPos
+      let x ← getNode nodeIdx
+      let (edge, childIdx) ← getChild x childPos
       let value := childValue - edgeStepCost edge
       let edge' := updateEdge edge value
       setAtT nodeIdx { x with children := x.children.set! childPos (edge', childIdx) }
-      let node ← resolve (← getNode! nodeIdx)
+      let node ← resolve (← getNode nodeIdx)
       let data' := updateNode node value
-      let x ← getNode! nodeIdx
+      let x ← getNode nodeIdx
       setAtT nodeIdx { x with data := data' }
-      let node ← resolve (← getNode! nodeIdx)
+      let node ← resolve (← getNode nodeIdx)
       return backupValueForParent node value
 
 def monteCarloTreeSearch (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
@@ -424,7 +424,7 @@ def monteCarloTreeSearch (ctx : ProofCheckContext) (evalPolicyValue : PolicyValu
     let mut step := 0
     while (← get).size <= maxNodes && step < maxSteps do
       discard <| reapMCTSStep ctx evalPolicyValue logConfig config {start.key} 0 progress? step
-      let root ← getNode! 0
+      let root ← getNode 0
       if root.data.isSolved then
         reportProgress? progress? (step + 1) maxNodes maxSteps "no goals" true true "solved"
         return some 0
