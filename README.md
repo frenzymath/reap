@@ -96,14 +96,14 @@ limits, generation parameters, and MCTS parameters:
 
 ```lean4
 reap (config := {
-  limits := { total := { maxGoals := 128, maxSteps := 48 } }
+  limits := { total := { maxNodes := 128, maxSteps := 48 } }
   generation := { numSamples := 8, numPremises := 24, temperature := 0.7 }
   mcts := { cInit := 0.002, visitDiscount := 0.995 }
 })
 ```
 
 Individual nested fields can also be set with dotted shorthand, such as
-`reap? (limits.total.maxGoals := 128) (generation.numSamples := 8) (mcts.cInit := 0.002)`.
+`reap? (limits.total.maxNodes := 128) (generation.numSamples := 8) (mcts.cInit := 0.002)`.
 
 Optional file outputs can be enabled with:
 

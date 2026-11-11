@@ -8,11 +8,11 @@ set_option linter.unusedSimpArgs false
 example : True := by
   run_tac do
     let reapStx ←
-      match ← parseTacticStr "reap (config := { limits := { total := { maxGoals := 17, maxSteps := 23 }, step := { heartbeats := 29, timeout := 31 } }, generation := { numSamples := 7, numPremises := 11, maxTokens := 37, temperature := 0.41 }, mcts := { cBase := 43.0, cInit := 0.047, visitDiscount := 0.953, priorTemperature := 59.0, progressiveSamplingC := 0.061, progressiveSamplingAlpha := 0.67 } })" with
+      match ← parseTacticStr "reap (config := { limits := { total := { maxNodes := 17, maxSteps := 23 }, step := { heartbeats := 29, timeout := 31 } }, generation := { numSamples := 7, numPremises := 11, maxTokens := 37, temperature := 0.41 }, mcts := { cBase := 43.0, cInit := 0.047, visitDiscount := 0.953, priorTemperature := 59.0, progressiveSamplingC := 0.061, progressiveSamplingAlpha := 0.67 } })" with
       | .ok stx => pure stx
       | .error err => throwError "failed to parse reap configuration: {toString err}"
     let closingConfig ← elabReapConfig reapStx[1]
-    unless closingConfig.limits.total.maxGoals == 17 && closingConfig.limits.total.maxSteps == 23 &&
+    unless closingConfig.limits.total.maxNodes == 17 && closingConfig.limits.total.maxSteps == 23 &&
         closingConfig.limits.step.heartbeats == 29 && closingConfig.limits.step.timeout == 31 &&
         closingConfig.generation.numSamples == 7 && closingConfig.generation.numPremises == 11 &&
         closingConfig.generation.maxTokens == 37 && closingConfig.generation.temperature == 0.41 &&
@@ -21,11 +21,11 @@ example : True := by
         closingConfig.mcts.progressiveSamplingC == 0.061 && closingConfig.mcts.progressiveSamplingAlpha == 0.67 do
       throwError "reap configuration was not elaborated correctly"
     let tryThisStx ←
-      match ← parseTacticStr "reap? (limits.total.maxGoals := 71) (limits.total.maxSteps := 73) (generation.numSamples := 79) (generation.numPremises := 83) (mcts.cInit := 0.089) (mcts.priorTemperature := 97.0)" with
+      match ← parseTacticStr "reap? (limits.total.maxNodes := 71) (limits.total.maxSteps := 73) (generation.numSamples := 79) (generation.numPremises := 83) (mcts.cInit := 0.089) (mcts.priorTemperature := 97.0)" with
       | .ok stx => pure stx
       | .error err => throwError "failed to parse reap? configuration: {toString err}"
     let tryThisConfig ← elabReapConfig tryThisStx[1]
-    unless tryThisConfig.limits.total.maxGoals == 71 && tryThisConfig.limits.total.maxSteps == 73 &&
+    unless tryThisConfig.limits.total.maxNodes == 71 && tryThisConfig.limits.total.maxSteps == 73 &&
         tryThisConfig.generation.numSamples == 79 && tryThisConfig.generation.numPremises == 83 &&
         tryThisConfig.mcts.cInit == 0.089 && tryThisConfig.mcts.priorTemperature == 97.0 do
       throwError "reap? configuration was not elaborated correctly"
@@ -93,8 +93,8 @@ def deferredHavePolicyValue (unfocusedVisits : IO.Ref Nat) : PolicyValueEval := 
   else
     return (0.0, #[("exact hP", #[], 1.0)])
 
-def testConfig (maxGoals maxSteps : Nat) : ReapConfig := {
-  limits := { total := { maxGoals, maxSteps } }
+def testConfig (maxNodes maxSteps : Nat) : ReapConfig := {
+  limits := { total := { maxNodes, maxSteps } }
 }
 
 def runMCTSForTest (evalPolicyValue : PolicyValueEval) (config : ReapConfig) :
