@@ -111,13 +111,11 @@ def generateValueFromPrompt (generator : TacticGenerator) (logConfig : ReapLogCo
     retryM? (maxRetries := 3) do
       let res ← generator.valueClient.generateChat req
       let res := parseChatResponseOpenAI res
-      let res := Json.parse res[0]!.1
-      if let .ok res := res then
-        match fromJson? res with
-        | .ok value => return value
-        | .error _ => throwError "Failed to decode value response"
-      else
-        throwError "Failed to parse value response as JSON"
+      let some res := res[0]? | throwError "Response is empty"
+      let .ok res := Json.parse res.1 | throwError "Failed to parse value response as JSON"
+      let .ok res := fromJson? res | throwError "Failed to decode value response"
+      return res
+
   match result with
   | some result => return -result.score
   | none => return -1000.0
