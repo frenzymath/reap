@@ -139,7 +139,7 @@ elab "reap?" config:Lean.Parser.Tactic.optConfig : tactic => do
   let logConfig ← ReapLogConfig.fromOptions (← getOptions)
   let progressId ← freshReapMCTSProgressId
   let initialProgress := ReapMCTSProgressView.initial
-    config.limits.total.maxGoals config.limits.total.maxSteps
+    config.limits.total.maxNodes config.limits.total.maxSteps
   setReapMCTSProgress progressId initialProgress
   addMCTSProgressWidget stx progressId initialProgress
   let markDone (solved : Bool) (status goalType : String) (script : Option String := none) :

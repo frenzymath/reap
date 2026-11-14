@@ -30,7 +30,7 @@ structure ReapMCTSConfig where
 
 structure ReapTotalLimitsConfig where
   /-- Maximum number of MCTS nodes to explore. -/
-  maxGoals : Nat := 64
+  maxNodes : Nat := 64
   /-- Maximum number of MCTS iterations. -/
   maxSteps : Nat := 64
 
