@@ -386,7 +386,7 @@ partial def reapMCTSStep (ctx : ProofCheckContext) (evalPolicyValue : PolicyValu
     (logConfig : ReapLogConfig) (config : ReapConfig) (ancestorKeys : Std.HashSet StateKey)
     (nodeIdx : Nat) (progress? : Option ProgressReporter) (step : Nat) :
     SearchM Float := do
-  let maxNodes := config.limits.total.maxGoals
+  let maxNodes := config.limits.total.maxNodes
   let maxSteps := config.limits.total.maxSteps
   let x ← getNode nodeIdx
   let node ← resolve x
@@ -419,7 +419,7 @@ def monteCarloTreeSearch (ctx : ProofCheckContext) (evalPolicyValue : PolicyValu
     (progress? : Option ProgressReporter) :
     TacticM (Option Nat × Array (Node NodeData (EdgeData × Nat))) :=
   StateT.run (s := #[ { data := start } ]) do
-  let maxNodes := config.limits.total.maxGoals
+  let maxNodes := config.limits.total.maxNodes
   let maxSteps := config.limits.total.maxSteps
     let mut step := 0
     while (← get).size <= maxNodes && step < maxSteps do
