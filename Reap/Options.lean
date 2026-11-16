@@ -46,7 +46,17 @@ structure ReapResourceLimitsConfig where
   /-- Limits for each candidate tactic evaluation. -/
   step : ReapStepLimitsConfig := {}
 
+/-- Search algorithm used by `reap` and `reap?`. -/
+inductive ReapSearchStrategy where
+  /-- Monte Carlo tree search. -/
+  | mcts
+  /-- AO*-style best-first search over the AND/OR tree, scored by the value model. -/
+  | bestFirst
+deriving Inhabited, BEq, Repr
+
 structure ReapConfig where
+  /-- Search algorithm. -/
+  strategy : ReapSearchStrategy := .mcts
   /-- Resource limits for the search and tactic evaluation. -/
   limits : ReapResourceLimitsConfig := {}
   /-- Parameters for premise selection and tactic generation. -/

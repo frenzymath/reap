@@ -9,6 +9,7 @@ public meta import Lean.Elab.Tactic.Config
 public meta import Reap.Options
 public meta import Reap.Tactic.Generator
 public meta import Reap.Tactic.TreeSearch
+public meta import Reap.Tactic.BestFirst
 
 public meta section
 
@@ -131,7 +132,7 @@ def addMCTSProgressWidget (tacRef : Syntax) (id : Nat)
 elab "reap" config:Lean.Parser.Tactic.optConfig : tactic => do
   let config ← elabReapConfig config
   let logConfig ← ReapLogConfig.fromOptions (← getOptions)
-  Reap.TreeSearch.reapMCTS (TacticGenerator.generatePolicyValue logConfig config.generation) logConfig config
+  Reap.TreeSearch.reapSearch (TacticGenerator.generatePolicyValue logConfig config.generation) logConfig config
 
 elab "reap?" config:Lean.Parser.Tactic.optConfig : tactic => do
   let stx ← getRef
@@ -158,7 +159,7 @@ elab "reap?" config:Lean.Parser.Tactic.optConfig : tactic => do
   let searchTask : TacticM Unit := do
     try
       let saved ← saveState
-      let result ← Reap.TreeSearch.runMCTS
+      let result ← Reap.TreeSearch.runSearch
         (TacticGenerator.generatePolicyValue logConfig config.generation) logConfig config
         (some reportProgress)
       saved.restore

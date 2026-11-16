@@ -179,6 +179,60 @@ def updateDuplicateChild (nodeIdx childPos : Nat) (childData : NodeData) : Searc
     let childRef ← getNode childIdx
     setAtT childIdx { childRef with data := { childRef.data with isSolved := childRef.data.isSolved || childData.isSolved } }
 
+abbrev PolicyTactics := Array (String × Array PremiseSelectionResult × Float)
+
+/--
+Apply each candidate tactic to the OR node `nodeIdx` (whose data is `node`) and
+add the resulting states as children. Tactics that fail, or that lead back to a
+state in `ancestorKeys`, are dropped; tactics leading to an existing child's
+state are merged into that child. AND children get their focus children right
+away. Returns the indices of all newly created nodes, including focus children.
+-/
+def expandNode (ctx : ProofCheckContext) (logConfig : ReapLogConfig) (config : ReapConfig)
+    (ancestorKeys : Std.HashSet StateKey) (nodeIdx : Nat) (node : NodeData)
+    (tactics : PolicyTactics) : SearchM (Array Nat) := do
+  let mut created := #[]
+  for (t, ps, prior) in tactics do
+    node.state.restore
+    let result ←
+      match node.partialGoal with
+      | some _ =>
+          -- A focused AND-child may close a goal using declarations whose
+          -- proof obligations are sibling AND-children. The whole replay is
+          -- final-checked after every child is solved.
+          evalTacticStr logConfig config.limits.step none t
+      | none =>
+          evalTacticStr logConfig config.limits.step (some (node.proofCheckContext ctx)) t
+    if result.isOk then
+      let probability := (prior / config.mcts.priorTemperature).exp
+      let childKind ← childKindAfterTactic
+      let childData ← NodeData.fromState childKind node.partialGoal
+      if !ancestorKeys.contains childData.key then
+        let parentRef ← getNode nodeIdx
+        let parent ← resolve parentRef
+        if let some ((e, c), childPos) := parent.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == childData.key then
+          let e' := { e with probability := e.probability + probability }
+          updateDuplicateChild nodeIdx childPos childData
+          modifyAtT nodeIdx fun node => {
+            node with
+              data := { node.data with isSolved := node.data.isSolved || c.isSolved || childData.isSolved }
+              children := node.children.modify childPos fun (_, c) => (e', c)
+          }
+        else
+          let childIdx ← pushChildT nodeIdx {
+            tacticStr := t
+            premise := ps
+            probability
+            value := 0.0
+          } childData
+          created := created.push childIdx
+          if childData.toPlay == .andNode then
+            pushFocusChildren childIdx childData
+            refreshNodeSolved childIdx
+            created := created ++ (← getNode childIdx).children.map (·.2)
+  refreshNodeSolved nodeIdx
+  return created
+
 def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
     (logConfig : ReapLogConfig) (config : ReapConfig)
     (ancestorKeys : Std.HashSet StateKey)
@@ -202,44 +256,7 @@ def visitNode (ctx : ProofCheckContext) (evalPolicyValue : PolicyValueEval)
       numEvaluations := node.data.numEvaluations + 1
   }
   modifyAtT nodeIdx fun node => { node with data := data' }
-
-  for (t, ps, prior) in tactics do
-    node.data.state.restore
-    let result ←
-      match node.data.partialGoal with
-      | some _ =>
-          -- A focused AND-child may close a goal using declarations whose
-          -- proof obligations are sibling AND-children. The whole replay is
-          -- final-checked after every child is solved.
-          evalTacticStr logConfig config.limits.step none t
-      | none =>
-          evalTacticStr logConfig config.limits.step (some (node.data.proofCheckContext ctx)) t
-    if result.isOk then
-      let probability := (prior / config.mcts.priorTemperature).exp
-      let childKind ← childKindAfterTactic
-      let childData ← NodeData.fromState childKind node.data.partialGoal
-      if !ancestorKeys.contains childData.key then
-        let parentRef ← getNode nodeIdx
-        let parent ← resolve parentRef
-        if let some ((e, c), childPos) := parent.children.zipIdx.find? fun ((e, c), _) => e.tacticStr == t || c.key == childData.key then
-          let e' := { e with probability := e.probability + probability }
-          updateDuplicateChild nodeIdx childPos childData
-          modifyAtT nodeIdx fun node => {
-            node with
-              data := { node.data with isSolved := node.data.isSolved || c.isSolved || childData.isSolved }
-              children := node.children.modify childPos fun (_, c) => (e', c)
-          }
-        else
-          let childIdx ← pushChildT nodeIdx {
-            tacticStr := t
-            premise := ps
-            probability
-            value := 0.0
-          } childData
-          if childData.toPlay == .andNode then
-            pushFocusChildren childIdx childData
-            refreshNodeSolved childIdx
-  refreshNodeSolved nodeIdx
+  discard <| expandNode ctx logConfig config ancestorKeys nodeIdx node.data tactics
   return p'
 
 structure CQU where
